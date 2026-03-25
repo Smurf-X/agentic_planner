@@ -235,7 +235,7 @@ class RealPipelineEvaluator(BaseEvaluator):
     Full evaluator that runs the pipeline and evaluates outputs.
 
     This evaluator:
-    1. Samples input data
+    1. Uses pre-sampled data (fixed throughout optimization)
     2. Runs the pipeline on the sample
     3. Evaluates outputs using LLM-as-a-judge or ground truth
     4. Collects cost metrics
@@ -260,6 +260,8 @@ class RealPipelineEvaluator(BaseEvaluator):
         self._price_per_million = price_per_million or {}
         self._executor_adapter = executor_adapter
         self._judge_evaluator = LlmJudgeEvaluator(eval_config, llm_client, price_per_million)
+        self._fixed_samples: Optional[List[Dict[str, Any]]] = None
+        self._fixed_ground_truths: Optional[List[Dict[str, Any]]] = None
 
     def set_llm_client(self, client: "BaseLLMClient") -> None:
         """Set the LLM client."""
@@ -269,6 +271,44 @@ class RealPipelineEvaluator(BaseEvaluator):
     def set_executor_adapter(self, adapter: Any) -> None:
         """Set the executor adapter."""
         self._executor_adapter = adapter
+
+    def prepare_fixed_samples(self, dataset_path: Optional[str] = None) -> None:
+        """
+        Prepare fixed samples at the start of optimization.
+
+        This method samples the data once and stores it for reuse
+        throughout the entire optimization process.
+
+        Args:
+            dataset_path: Path to the dataset (optional if already set in executor adapter)
+        """
+        if self._executor_adapter is None:
+            return
+
+        if self.eval_config.fixed_samples is not None:
+            self._fixed_samples = self.eval_config.fixed_samples
+            self._fixed_ground_truths = []
+            return
+
+        import random
+
+        data = self._executor_adapter.load_dataset(dataset_path)
+
+        if not data:
+            return
+
+        sample_size = min(self.eval_config.sample_size, len(data))
+        rng = random.Random(self.eval_config.random_seed)
+        self._fixed_samples = rng.sample(data, sample_size)
+
+        if self.eval_config.mode == EvaluationMode.WITH_GROUND_TRUTH:
+            gt_data = self._executor_adapter.load_ground_truth()
+            if gt_data:
+                self._fixed_ground_truths = gt_data[: len(self._fixed_samples)]
+            else:
+                self._fixed_ground_truths = []
+        else:
+            self._fixed_ground_truths = []
 
     def evaluate(self, cfg: DJExecutableConfig) -> tuple[CostBreakdown, float]:
         """
@@ -293,19 +333,26 @@ class RealPipelineEvaluator(BaseEvaluator):
         reasonings: List[str] = []
         errors: List[str] = []
 
-        # Check if we have an executor adapter
         if self._executor_adapter is None:
-            # Fall back to stub evaluation
             return self._stub_evaluate(cfg)
 
         try:
-            # Run pipeline on sample
-            from agentic_planner.optimizer.executor_adapter import SampleExecutionResult
-            
-            exec_result = self._executor_adapter.run_sample(
+            if self._fixed_samples is None:
+                self.prepare_fixed_samples()
+
+            if self._fixed_samples is None or len(self._fixed_samples) == 0:
+                return EvaluationResult(
+                    cost=cost,
+                    quality=0.0,
+                    sample_size=0,
+                    scores=[],
+                    reasonings=[],
+                    errors=["No samples available"],
+                )
+
+            exec_result = self._executor_adapter.run_on_fixed_samples(
                 cfg,
-                sample_size=self.eval_config.sample_size,
-                random_seed=self.eval_config.random_seed,
+                self._fixed_samples,
             )
 
             if not exec_result.ok:
@@ -319,20 +366,18 @@ class RealPipelineEvaluator(BaseEvaluator):
                     errors=errors,
                 )
 
-            inputs = exec_result.inputs
+            inputs = self._fixed_samples
             outputs = exec_result.outputs
 
-            # Collect cost metrics
             token_usage = exec_result.token_usage
             cost.prompt_tokens = token_usage.get("prompt_tokens", 0)
             cost.completion_tokens = token_usage.get("completion_tokens", 0)
             cost.model_usage = token_usage.get("model_usage", {})
             cost.llm_token_cost = compute_token_cost(cost.model_usage, self._price_per_million)
 
-            # Evaluate quality
             if self.eval_config.mode == EvaluationMode.WITH_GROUND_TRUTH:
                 gt_key = self.eval_config.ground_truth_key or ""
-                ground_truths = exec_result.ground_truths
+                ground_truths = self._fixed_ground_truths if self._fixed_ground_truths else []
                 eval_results = self._judge_evaluator.evaluate_with_ground_truth(
                     outputs, ground_truths, gt_key
                 )

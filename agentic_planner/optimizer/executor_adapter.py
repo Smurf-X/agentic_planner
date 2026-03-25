@@ -143,6 +143,26 @@ class ExecutorAdapter:
         """
         raise NotImplementedError("Subclasses must implement run_sample")
 
+    def run_on_fixed_samples(
+        self,
+        cfg: DJExecutableConfig,
+        samples: List[Dict[str, Any]],
+    ) -> SampleExecutionResult:
+        """
+        Run the pipeline on pre-sampled data.
+
+        This method should be overridden by subclasses that implement
+        actual DJ execution.
+
+        Args:
+            cfg: The pipeline configuration
+            samples: Pre-sampled data to use
+
+        Returns:
+            SampleExecutionResult with inputs, outputs, and metrics
+        """
+        raise NotImplementedError("Subclasses must implement run_on_fixed_samples")
+
 
 class StubExecutorAdapter(ExecutorAdapter):
     """
@@ -204,6 +224,60 @@ class StubExecutorAdapter(ExecutorAdapter):
                 params = step.get(op_name, {})
 
                 # Simulate some operators
+                if "filter" in op_name:
+                    pass
+                elif "mapper" in op_name or "map" in op_name:
+                    out["_processed"] = True
+                elif "deduplicator" in op_name or "dedup" in op_name:
+                    out["_dedup_key"] = hash(str(inp)) % 10000
+
+            if self._output_modifier:
+                out = self._output_modifier(out, cfg)
+
+            outputs.append(out)
+
+        ground_truths = self.load_ground_truth() if self._ground_truth_path else []
+
+        token_usage = {
+            "prompt_tokens": len(samples) * 100,
+            "completion_tokens": len(samples) * 50,
+            "model_usage": {
+                "gpt-4o-mini": {
+                    "prompt": len(samples) * 100,
+                    "completion": len(samples) * 50,
+                }
+            },
+        }
+
+        return SampleExecutionResult(
+            ok=True,
+            inputs=samples,
+            outputs=outputs,
+            token_usage=token_usage,
+            ground_truths=ground_truths[: len(samples)] if ground_truths else [],
+            errors=[],
+            sample_size=len(samples),
+            wall_time_sec=time.time() - start_time,
+        )
+
+    def run_on_fixed_samples(
+        self,
+        cfg: DJExecutableConfig,
+        samples: List[Dict[str, Any]],
+    ) -> SampleExecutionResult:
+        """Generate stub outputs on fixed samples without actual execution."""
+        start_time = time.time()
+        outputs = []
+
+        for inp in samples:
+            out = dict(inp)
+            process = cfg.get("process", [])
+            for step in process:
+                if not isinstance(step, dict):
+                    continue
+                op_name = next(iter(step.keys()), "")
+                params = step.get(op_name, {})
+
                 if "filter" in op_name:
                     pass
                 elif "mapper" in op_name or "map" in op_name:
@@ -346,6 +420,58 @@ class DJExecutorAdapter(ExecutorAdapter):
                 wall_time_sec=time.time() - start_time,
             )
 
+    def run_on_fixed_samples(
+        self,
+        cfg: DJExecutableConfig,
+        samples: List[Dict[str, Any]],
+    ) -> SampleExecutionResult:
+        """
+        Run the DJ pipeline on pre-sampled data.
+
+        This implementation uses fixed samples to ensure consistent
+        evaluation throughout the optimization process.
+        """
+        import tempfile
+
+        start_time = time.time()
+
+        try:
+            work_path = Path(self._work_dir)
+            work_path.mkdir(parents=True, exist_ok=True)
+
+            with tempfile.TemporaryDirectory(dir=str(work_path)) as tmpdir:
+                sample_path = Path(tmpdir) / "sample.jsonl"
+                with sample_path.open("w", encoding="utf-8") as f:
+                    for item in samples:
+                        f.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+                exec_cfg = dict(cfg)
+                exec_cfg["dataset_path"] = str(sample_path)
+                exec_cfg["export_path"] = str(Path(tmpdir) / "output.jsonl")
+
+                outputs, token_usage = self._run_pipeline(exec_cfg, tmpdir)
+
+            ground_truths = self.load_ground_truth() if self._ground_truth_path else []
+
+            return SampleExecutionResult(
+                ok=True,
+                inputs=samples,
+                outputs=outputs,
+                token_usage=token_usage,
+                ground_truths=ground_truths[: len(samples)] if ground_truths else [],
+                errors=[],
+                sample_size=len(samples),
+                wall_time_sec=time.time() - start_time,
+            )
+
+        except Exception as e:
+            return SampleExecutionResult(
+                ok=False,
+                errors=[str(e)],
+                sample_size=0,
+                wall_time_sec=time.time() - start_time,
+            )
+
     def _run_pipeline(
         self,
         cfg: DJExecutableConfig,
@@ -366,12 +492,12 @@ class DJExecutorAdapter(ExecutorAdapter):
         import yaml
 
         config_path = Path(work_dir) / "pipeline_config.yaml"
-        
+
         # Enable tracer for token tracking
         exec_cfg = dict(cfg)
         exec_cfg["open_tracer"] = True
         exec_cfg["work_dir"] = work_dir
-        
+
         with config_path.open("w", encoding="utf-8") as f:
             yaml.dump(exec_cfg, f, allow_unicode=True, default_flow_style=False)
 
@@ -409,26 +535,33 @@ class DJExecutorAdapter(ExecutorAdapter):
     ) -> Dict[str, Any]:
         """
         Collect token usage from pipeline execution.
-        
+
         For LLM operators, estimate token usage based on input/output sizes.
         This is a pragmatic approach that works without modifying DJ core.
         """
         process = cfg.get("process", [])
-        
+
         # Known LLM operators that make API calls
         llm_ops = {
-            "llm_analysis_filter", "llm_filter", "llm_map",
-            "optimize_qa_mapper", "optimize_prompt_mapper",
-            "generate_qa_from_text_mapper", "generate_qa_from_examples_mapper",
-            "image_captioning_mapper", "mllm_mapper",
-            "extract_keyword_mapper", "extract_event_mapper",
-            "extract_entity_relation_mapper", "extract_entity_attribute_mapper",
+            "llm_analysis_filter",
+            "llm_filter",
+            "llm_map",
+            "optimize_qa_mapper",
+            "optimize_prompt_mapper",
+            "generate_qa_from_text_mapper",
+            "generate_qa_from_examples_mapper",
+            "image_captioning_mapper",
+            "mllm_mapper",
+            "extract_keyword_mapper",
+            "extract_event_mapper",
+            "extract_entity_relation_mapper",
+            "extract_entity_attribute_mapper",
         }
-        
+
         total_prompt = 0
         total_completion = 0
         model_usage: Dict[str, Dict[str, int]] = {}
-        
+
         # Check which LLM ops are in the pipeline
         used_llm_ops = []
         for step in process:
@@ -440,28 +573,28 @@ class DJExecutorAdapter(ExecutorAdapter):
                 if isinstance(params, dict):
                     model = params.get("api_model") or params.get("model") or "gpt-4o"
                     used_llm_ops.append((op_name, model))
-        
+
         if not used_llm_ops:
             return {"prompt_tokens": 0, "completion_tokens": 0, "model_usage": {}}
-        
+
         # Estimate tokens from outputs
         for output in outputs:
             text = output.get("text", "")
             # Rough token estimation: ~4 chars per token for English
             output_tokens = len(text) // 4
-            
+
             for op_name, model in used_llm_ops:
                 # Estimate input tokens (typically larger than output)
                 input_tokens = output_tokens * 2  # Rough estimate
-                
+
                 total_prompt += input_tokens
                 total_completion += output_tokens
-                
+
                 if model not in model_usage:
                     model_usage[model] = {"prompt": 0, "completion": 0}
                 model_usage[model]["prompt"] += input_tokens
                 model_usage[model]["completion"] += output_tokens
-        
+
         return {
             "prompt_tokens": total_prompt,
             "completion_tokens": total_completion,

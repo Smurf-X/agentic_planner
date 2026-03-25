@@ -168,6 +168,10 @@ class BeamSearchStrategy(BaseSearchStrategy):
                 errors=["Invalid root config: " + "; ".join(errors)],
             )
 
+        if self._evaluator is not None and hasattr(self._evaluator, "prepare_fixed_samples"):
+            dataset_path = root.get("dataset_path")
+            self._evaluator.prepare_fixed_samples(dataset_path)
+
         all_candidates: List[SearchResult] = []
         pareto_candidates: List[SearchResult] = []
 

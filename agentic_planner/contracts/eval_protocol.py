@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -43,6 +43,10 @@ class EvalConfig(BaseModel):
     task_description: str = Field(
         default="",
         description="User-facing task text passed to the judge.",
+    )
+    fixed_samples: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Pre-sampled data to use throughout optimization. If provided, sample_size and random_seed are ignored.",
     )
 
     model_config = {"extra": "allow"}
