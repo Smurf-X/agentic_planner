@@ -1,0 +1,95 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentic-planner"
+version = "0.1.0"
+description = "Natural language pipeline design and optimization for Data-Juicer"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Data-Juicer Team"}
+]
+keywords = [
+    "data-processing",
+    "pipeline-optimization",
+    "llm",
+    "data-juicer",
+    "natural-language"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "httpx>=0.24.0",
+    "rank-bm25>=0.2.2",
+    "numpy>=1.20.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0",
+    "isort>=5.12",
+    "mypy>=1.0",
+    "ruff>=0.1.0",
+]
+vector = [
+    "sentence-transformers>=2.0.0",
+]
+jieba = [
+    "jieba>=0.42.0",
+]
+all = [
+    "sentence-transformers>=2.0.0",
+    "jieba>=0.42.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/modelscope/data-juicer"
+Documentation = "https://github.com/modelscope/data-juicer/blob/main/docs/README.md"
+Repository = "https://github.com/modelscope/data-juicer"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agentic_planner*"]
+
+[tool.setuptools.package-data]
+agentic_planner = ["py.typed"]
+
+[tool.black]
+line-length = 100
+target-version = ['py310', 'py311', 'py312']
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
