@@ -33,9 +33,10 @@ def _op_type(name: str) -> str:
     """Get the type of an operator by name."""
     if name in _TYPE_CACHE:
         return _TYPE_CACHE[name]
-    
+
     try:
         from data_juicer.tools.op_search import OPSearcher
+
         searcher = OPSearcher(specified_op_list=[name])
         if not searcher.op_records:
             t = "mapper"
@@ -43,7 +44,7 @@ def _op_type(name: str) -> str:
             t = searcher.op_records[0].type
     except ImportError:
         t = "mapper"
-    
+
     _TYPE_CACHE[name] = t
     return t
 
@@ -57,14 +58,18 @@ class ReorderFiltersFirstDirective(Directive):
 
     Note: This is a heuristic optimization and does not consider field
     dependencies. Use with caution when filters depend on mapper outputs.
+
+    Note: This is a GLOBAL directive - target_op parameter is ignored.
     """
 
     name = "reorder_filters_first"
+    applicable_op_types = None
 
     def apply_with_index(
         self,
         cfg: DJExecutableConfig,
         index: ProcessIndex,
+        target_op: Optional[int] = None,
     ) -> DirectiveResult:
         before = self._clone(cfg)
         proc = before.get("process")
@@ -115,6 +120,8 @@ class ReorderFiltersFirstDirective(Directive):
             config_after=after,
             details={
                 "priorities": [(x[2], x[0]) for x in indexed],
-                "order_before": [index.identities[i].identity_hash for i in range(len(index.identities))],
+                "order_before": [
+                    index.identities[i].identity_hash for i in range(len(index.identities))
+                ],
             },
         )

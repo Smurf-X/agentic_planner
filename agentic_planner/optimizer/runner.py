@@ -22,7 +22,9 @@ from agentic_planner.optimizer.directive_engine import (
 )
 from agentic_planner.optimizer.evaluator import PipelineEvaluator, StubPipelineEvaluator
 from agentic_planner.optimizer.optimization_config import OptimizationConfig
-from agentic_planner.optimizer.search.beam import BeamSearchConfig, BeamSearchOptimizer, CandidateRecord
+from agentic_planner.optimizer.search.beam import BeamSearchConfig, BeamSearchOptimizer
+
+CandidateRecord = Any  # Type alias for dynamic candidate objects
 
 if TYPE_CHECKING:
     from agentic_planner.generator.llm import BaseLLMClient
@@ -172,7 +174,10 @@ class OptimizationRunner:
         errors: List[str] = []
 
         # Stage 1: Directive-based optimization
-        if self.mode in (OptimizationRunMode.DIRECTIVE_ONLY, OptimizationRunMode.DIRECTIVE_THEN_SEARCH):
+        if self.mode in (
+            OptimizationRunMode.DIRECTIVE_ONLY,
+            OptimizationRunMode.DIRECTIVE_THEN_SEARCH,
+        ):
             engine = DirectiveEngine(
                 DirectiveEngineConfig.model_validate(self._directive_cfg),
                 llm_client=self._llm_client,
@@ -183,7 +188,10 @@ class OptimizationRunner:
             current = dir_run.config
 
         # Stage 2: Search-based optimization
-        if self.mode in (OptimizationRunMode.SEARCH_ONLY, OptimizationRunMode.DIRECTIVE_THEN_SEARCH):
+        if self.mode in (
+            OptimizationRunMode.SEARCH_ONLY,
+            OptimizationRunMode.DIRECTIVE_THEN_SEARCH,
+        ):
             if not self._beam_cfg:
                 errors.append("Search mode requires beam_config")
             else:
@@ -267,12 +275,14 @@ class OptimizationRunner:
         trace_data = []
         for item in trace:
             if hasattr(item, "__dict__"):
-                trace_data.append({
-                    "ok": getattr(item, "ok", None),
-                    "applied": getattr(item, "applied", None),
-                    "directive_name": getattr(item, "directive_name", None),
-                    "message": getattr(item, "message", None),
-                })
+                trace_data.append(
+                    {
+                        "ok": getattr(item, "ok", None),
+                        "applied": getattr(item, "applied", None),
+                        "directive_name": getattr(item, "directive_name", None),
+                        "message": getattr(item, "message", None),
+                    }
+                )
 
         with path.open("w", encoding="utf-8") as f:
             json.dump(trace_data, f, ensure_ascii=False, indent=2)

@@ -21,6 +21,7 @@ class BumpMinLenDirective(Directive):
     """
 
     name = "bump_text_length_min_len"
+    applicable_op_types = ["text_length_filter"]
 
     def __init__(self, delta: int = 10) -> None:
         """
@@ -33,6 +34,7 @@ class BumpMinLenDirective(Directive):
         self,
         cfg: DJExecutableConfig,
         index: ProcessIndex,
+        target_op: Optional[int] = None,
     ) -> DirectiveResult:
         before = self._clone(cfg)
         proc = before.get("process")
@@ -56,6 +58,10 @@ class BumpMinLenDirective(Directive):
             op_name, params = self._get_op_params(step)
 
             if op_name == "text_length_filter":
+                if target_op is not None and i != target_op:
+                    new_proc.append(step)
+                    continue
+
                 cur = params.get("min_len")
                 if isinstance(cur, (int, float)):
                     new_params = dict(params)

@@ -35,6 +35,7 @@ class RewritePromptDirective(Directive):
     """
 
     name = "rewrite_prompt"
+    applicable_op_types = list(_LLM_PROMPT_OPS.keys())
 
     def __init__(
         self,
@@ -59,11 +60,13 @@ class RewritePromptDirective(Directive):
         self,
         cfg: DJExecutableConfig,
         index: ProcessIndex,
+        target_op: Optional[int] = None,
     ) -> DirectiveResult:
         before = self._clone(cfg)
 
-        # Find target operator
-        target_idx = self.locator.find_index(index.identities)
+        target_idx = target_op
+        if target_idx is None:
+            target_idx = self.locator.find_index(index.identities)
         if target_idx is None:
             return DirectiveResult(
                 ok=False,
@@ -88,7 +91,6 @@ class RewritePromptDirective(Directive):
                 config_after=before,
             )
 
-        # Check if this operator has a prompt parameter
         prompt_key = _LLM_PROMPT_OPS.get(op_name, "prompt")
         if prompt_key not in params:
             return DirectiveResult(
@@ -121,7 +123,6 @@ class RewritePromptDirective(Directive):
 
         after["process"][target_idx] = {op_name: new_params}
 
-        # Get identity hash for traceability
         identity = index.get_by_index(target_idx)
 
         return DirectiveResult(
@@ -134,7 +135,9 @@ class RewritePromptDirective(Directive):
             details={
                 "identity_hash": identity.identity_hash if identity else None,
                 "op_type": op_name,
-                "old_prompt_preview": old_prompt[:100] + "..." if len(old_prompt) > 100 else old_prompt,
+                "old_prompt_preview": old_prompt[:100] + "..."
+                if len(old_prompt) > 100
+                else old_prompt,
             },
         )
 
@@ -147,6 +150,7 @@ class AddFewShotExamplesDirective(Directive):
     """
 
     name = "add_few_shot_examples"
+    applicable_op_types = list(_LLM_PROMPT_OPS.keys())
 
     def __init__(self, locator: OpLocator, examples: List[Dict[str, str]]) -> None:
         """
@@ -161,6 +165,7 @@ class AddFewShotExamplesDirective(Directive):
         self,
         cfg: DJExecutableConfig,
         index: ProcessIndex,
+        target_op: Optional[int] = None,
     ) -> DirectiveResult:
         before = self._clone(cfg)
 
@@ -174,8 +179,9 @@ class AddFewShotExamplesDirective(Directive):
                 config_after=before,
             )
 
-        # Find target operator
-        target_idx = self.locator.find_index(index.identities)
+        target_idx = target_op
+        if target_idx is None:
+            target_idx = self.locator.find_index(index.identities)
         if target_idx is None:
             return DirectiveResult(
                 ok=False,
@@ -204,7 +210,6 @@ class AddFewShotExamplesDirective(Directive):
         old_prompt = params.get(prompt_key, "")
         new_params = dict(params)
 
-        # Build few-shot section
         examples_text = "\n\n## Examples:\n"
         for i, ex in enumerate(self.examples, 1):
             inp = ex.get("input", "")

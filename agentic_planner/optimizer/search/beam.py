@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Enhanced Beam search strategy with multi-objective support.
+Enhanced Beam search strategy with action-based optimization.
 
 Beam search maintains top-k candidates at each iteration and explores
 their neighbors. This enhanced version supports:
+- Action-based optimization (operator, directive) pairs
+- LLM-guided action selection (optional)
 - Multi-objective optimization (quality vs cost)
 - Pareto frontier tracking
 - Adaptive beam width
@@ -13,13 +15,14 @@ from __future__ import annotations
 
 import random
 from copy import deepcopy
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set, Tuple
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 from pydantic import BaseModel, Field
 
 from agentic_planner.contracts.cost import CostBreakdown
 from agentic_planner.contracts.recipe import DJExecutableConfig, validate_executable_config
+from agentic_planner.optimizer.action import Action, ActionSpace, ActionSpaceBuilder
 from agentic_planner.optimizer.directives.base import DirectiveResult
 from agentic_planner.optimizer.directives.registry import DIRECTIVE_REGISTRY
 from agentic_planner.optimizer.search.base import (
@@ -30,20 +33,43 @@ from agentic_planner.optimizer.search.base import (
     SearchStrategyType,
 )
 
+if TYPE_CHECKING:
+    from agentic_planner.optimizer.llm_action_selector import LLMActionSelector
+
 
 class BeamSearchConfig(BaseModel):
     """Configuration for beam search."""
 
     beam_width: int = Field(default=4, ge=1, le=64)
     max_iterations: int = Field(default=3, ge=1, le=50)
+
     expansion_directives: List[str] = Field(
         default_factory=list,
-        description="Directive keys tried as one-step neighbors from each beam.",
+        description="Directive names to include in action space. Empty = use all registered.",
     )
-    # Multi-objective settings
+
+    use_llm_selection: bool = Field(
+        default=False,
+        description="Use LLM to select promising actions.",
+    )
+
+    llm_selection_top_k: int = Field(
+        default=10,
+        description="Number of actions for LLM to select.",
+    )
+
+    optimize_goal: str = Field(
+        default="quality",
+        description="Optimization goal: 'quality', 'cost', or 'balanced'.",
+    )
+
     track_pareto: bool = Field(default=True, description="Track Pareto frontier during search.")
-    cost_weight: float = Field(default=0.0, ge=0.0, le=1.0, description="Weight for cost in ranking (0=quality only).")
-    adaptive_beam: bool = Field(default=False, description="Adaptively adjust beam width based on improvement.")
+    cost_weight: float = Field(
+        default=0.0, ge=0.0, le=1.0, description="Weight for cost in ranking (0=quality only)."
+    )
+    adaptive_beam: bool = Field(
+        default=False, description="Adaptively adjust beam width based on improvement."
+    )
     min_beam_width: int = Field(default=2, ge=1, description="Minimum beam width when adaptive.")
     max_beam_width: int = Field(default=16, ge=1, description="Maximum beam width when adaptive.")
     deduplicate: bool = Field(default=True, description="Remove duplicate configurations.")
@@ -62,6 +88,7 @@ class BeamCandidate:
     origin: str
     trace: List[DirectiveResult]
     config_hash: str = ""
+    used_actions: Set[Tuple[int, str]] = field(default_factory=set)
 
     def __post_init__(self):
         if not self.config_hash:
@@ -72,26 +99,27 @@ class BeamCandidate:
         """Generate a hash for configuration deduplication."""
         import hashlib
         import json
+
         content = json.dumps(cfg.get("process", []), sort_keys=True)
         return hashlib.md5(content.encode()).hexdigest()[:12]
 
     def score(self, cost_weight: float = 0.0) -> float:
         """Compute a combined score for ranking."""
-        # Normalize quality to 0-1, cost inverse to 0-1
-        # Higher score is better
-        quality_score = self.quality  # Assume already 0-1
-        total_cost = self.cost.llm_token_cost + self.cost.wall_time_sec
-        # Use log scale for cost to handle large differences
         import math
+
+        quality_score = self.quality
+        total_cost = self.cost.llm_token_cost + self.cost.wall_time_sec
         cost_score = 1.0 / (1.0 + math.log1p(total_cost))
         return (1 - cost_weight) * quality_score + cost_weight * cost_score
 
 
 class BeamSearchStrategy(BaseSearchStrategy):
     """
-    Enhanced beam search with multi-objective optimization.
+    Enhanced beam search with action-based optimization.
 
     Features:
+    - Action-based: (operator, directive) pairs
+    - LLM-guided action selection (optional)
     - Maintains top-k candidates at each iteration
     - Tracks Pareto frontier across all iterations
     - Supports cost-weighted ranking
@@ -102,14 +130,33 @@ class BeamSearchStrategy(BaseSearchStrategy):
         self,
         config: BeamSearchConfig,
         evaluator: Optional[Any] = None,
+        llm_selector: Optional[LLMActionSelector] = None,
+        action_builder: Optional[ActionSpaceBuilder] = None,
     ) -> None:
         super().__init__(
             SearchConfig(strategy=SearchStrategyType.BEAM),
             evaluator,
         )
         self._beam_config = config
+        self._llm_selector = llm_selector
         self._rng = random.Random(config.seed)
         self._seen_hashes: Set[str] = set()
+
+        if action_builder:
+            self._action_builder = action_builder
+        else:
+            directives = None
+            if config.expansion_directives:
+                directives = [
+                    DIRECTIVE_REGISTRY[name]
+                    for name in config.expansion_directives
+                    if name in DIRECTIVE_REGISTRY
+                ]
+            self._action_builder = ActionSpaceBuilder(directives=directives)
+
+    def set_llm_selector(self, selector: LLMActionSelector) -> None:
+        """Set the LLM action selector."""
+        self._llm_selector = selector
 
     def search(self, root: DJExecutableConfig) -> SearchReport:
         """Execute beam search."""
@@ -124,7 +171,6 @@ class BeamSearchStrategy(BaseSearchStrategy):
         all_candidates: List[SearchResult] = []
         pareto_candidates: List[SearchResult] = []
 
-        # Evaluate root
         root_cost, root_quality = self._evaluate(root)
         root_beam = BeamCandidate(
             config=deepcopy(root),
@@ -132,6 +178,7 @@ class BeamSearchStrategy(BaseSearchStrategy):
             quality=root_quality,
             origin="root",
             trace=[],
+            used_actions=set(),
         )
         self._seen_hashes.add(root_beam.config_hash)
 
@@ -141,43 +188,58 @@ class BeamSearchStrategy(BaseSearchStrategy):
         current_beam_width = self._beam_config.beam_width
         last_best_score = root_beam.score(self._beam_config.cost_weight)
 
+        base_action_space = self._action_builder.build(root)
+
         for iteration in range(self._beam_config.max_iterations):
             self._iteration_count = iteration + 1
             next_beams: List[BeamCandidate] = []
 
             for beam in beams:
-                for dname in self._beam_config.expansion_directives:
+                available_actions = self._get_available_actions(beam, base_action_space)
+
+                if not available_actions:
+                    continue
+
+                actions_to_try = self._select_actions(
+                    available_actions,
+                    beam,
+                    iteration,
+                )
+
+                for action in actions_to_try:
                     if self._evaluated_count >= self._config.max_evaluations:
                         break
 
-                    directive = DIRECTIVE_REGISTRY.get(dname)
-                    if directive is None:
-                        continue
+                    step = action.apply(beam.config)
 
-                    step = directive.apply(beam.config)
                     if not step.ok or step.config_after is None:
                         continue
                     if not step.applied:
                         continue
-                    if validate_executable_config(step.config_after):
+
+                    val_errors = validate_executable_config(step.config_after)
+                    if val_errors:
                         continue
 
                     child_config = step.config_after
                     child_hash = BeamCandidate._hash_config(child_config)
 
-                    # Deduplication
                     if self._beam_config.deduplicate and child_hash in self._seen_hashes:
                         continue
                     self._seen_hashes.add(child_hash)
 
-                    # Evaluate
                     child_cost, child_quality = self._evaluate(child_config)
+
+                    new_used = beam.used_actions.copy()
+                    new_used.add((action.operator_index, action.directive_name))
+
                     child = BeamCandidate(
                         config=child_config,
                         cost=child_cost,
                         quality=child_quality,
-                        origin=f"{beam.origin}+{dname}",
+                        origin=f"{beam.origin}+{action.directive_name}[{action.operator_name}]",
                         trace=beam.trace + [step],
+                        used_actions=new_used,
                     )
                     next_beams.append(child)
                     all_candidates.append(self._beam_to_result(child, iteration + 1))
@@ -188,33 +250,31 @@ class BeamSearchStrategy(BaseSearchStrategy):
             if not next_beams:
                 break
 
-            # Sort by score and select top beams
             next_beams.sort(key=lambda b: b.score(self._beam_config.cost_weight), reverse=True)
 
-            # Adaptive beam width
             if self._beam_config.adaptive_beam and next_beams:
                 best_score = next_beams[0].score(self._beam_config.cost_weight)
                 improvement = best_score - last_best_score
-                if improvement > 0.01:  # Significant improvement
+                if improvement > 0.01:
                     current_beam_width = min(
-                        current_beam_width + 2,
-                        self._beam_config.max_beam_width
+                        current_beam_width + 2, self._beam_config.max_beam_width
                     )
-                elif improvement < 0.001:  # Little improvement
+                elif improvement < 0.001:
                     current_beam_width = max(
-                        current_beam_width - 1,
-                        self._beam_config.min_beam_width
+                        current_beam_width - 1, self._beam_config.min_beam_width
                     )
                 last_best_score = best_score
 
             beams = next_beams[:current_beam_width]
 
-            # Update Pareto frontier
             if self._beam_config.track_pareto:
                 pareto_candidates = self._compute_pareto_front(all_candidates)
 
-        # Final Pareto computation
-        pareto = self._compute_pareto_front(all_candidates) if not self._beam_config.track_pareto else pareto_candidates
+        pareto = (
+            self._compute_pareto_front(all_candidates)
+            if not self._beam_config.track_pareto
+            else pareto_candidates
+        )
 
         return SearchReport(
             ok=True,
@@ -229,8 +289,52 @@ class BeamSearchStrategy(BaseSearchStrategy):
                 "beam_width": current_beam_width,
                 "unique_configs": len(self._seen_hashes),
                 "pareto_size": len(pareto),
+                "action_space_size": len(base_action_space),
             },
         )
+
+    def _get_available_actions(
+        self,
+        beam: BeamCandidate,
+        base_space: ActionSpace,
+    ) -> List[Action]:
+        """Get available actions for a beam, excluding already-used ones."""
+        return [
+            a for a in base_space if (a.operator_index, a.directive_name) not in beam.used_actions
+        ]
+
+    def _select_actions(
+        self,
+        available_actions: List[Action],
+        beam: BeamCandidate,
+        iteration: int,
+    ) -> List[Action]:
+        """Select actions to try for a beam."""
+        if self._beam_config.use_llm_selection and self._llm_selector:
+            context = {
+                "current_config": beam.config,
+                "quality": beam.quality,
+                "cost": beam.cost.llm_token_cost,
+                "iteration": iteration,
+            }
+
+            from agentic_planner.optimizer.action import ActionSpace
+
+            temp_space = ActionSpace(
+                actions=available_actions,
+                config_hash="",
+                operator_count=0,
+            )
+
+            result = self._llm_selector.select(
+                temp_space,
+                context,
+                top_k=self._beam_config.llm_selection_top_k,
+                optimize_goal=self._beam_config.optimize_goal,
+            )
+            return result.selected_actions
+
+        return available_actions[: self._beam_config.llm_selection_top_k]
 
     def _beam_to_result(self, beam: BeamCandidate, generation: int) -> SearchResult:
         """Convert BeamCandidate to SearchResult."""
@@ -244,7 +348,6 @@ class BeamSearchStrategy(BaseSearchStrategy):
         )
 
 
-# Legacy compatibility: keep the old BeamSearchOptimizer interface
 class BeamSearchOptimizer:
     """
     Legacy interface for beam search.
@@ -271,15 +374,18 @@ class BeamSearchOptimizer:
         Returns list of CandidateRecord for backward compatibility.
         """
         report = self._strategy.search(root)
-        # Convert SearchResult to CandidateRecord-like objects
         return [
-            type("CandidateRecord", (), {
-                "config": c.config,
-                "cost": c.cost,
-                "quality": c.quality,
-                "origin": c.origin,
-                "trace": c.trace,
-            })()
+            type(
+                "CandidateRecord",
+                (),
+                {
+                    "config": c.config,
+                    "cost": c.cost,
+                    "quality": c.quality,
+                    "origin": c.origin,
+                    "trace": c.trace,
+                },
+            )()
             for c in report.candidates
         ]
 

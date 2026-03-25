@@ -30,6 +30,7 @@ class AddGleaningDirective(Directive):
     """
 
     name = "add_gleaning"
+    applicable_op_types = list(_GLEANING_SUPPORTED_OPS)
 
     def __init__(
         self,
@@ -51,11 +52,13 @@ class AddGleaningDirective(Directive):
         self,
         cfg: DJExecutableConfig,
         index: ProcessIndex,
+        target_op: Optional[int] = None,
     ) -> DirectiveResult:
         before = self._clone(cfg)
 
-        # Find target operator
-        target_idx = self.locator.find_index(index.identities)
+        target_idx = target_op
+        if target_idx is None:
+            target_idx = self.locator.find_index(index.identities)
         if target_idx is None:
             return DirectiveResult(
                 ok=False,
@@ -80,7 +83,6 @@ class AddGleaningDirective(Directive):
                 config_after=before,
             )
 
-        # Check if gleaning is supported for this operator
         if op_name not in _GLEANING_SUPPORTED_OPS:
             return DirectiveResult(
                 ok=True,
@@ -91,7 +93,6 @@ class AddGleaningDirective(Directive):
                 config_after=after,
             )
 
-        # Check if gleaning already enabled
         if params.get("max_rounds", 1) > 1:
             return DirectiveResult(
                 ok=True,
@@ -135,6 +136,7 @@ class RemoveGleaningDirective(Directive):
     """
 
     name = "remove_gleaning"
+    applicable_op_types = list(_GLEANING_SUPPORTED_OPS)
 
     def __init__(self, locator: OpLocator) -> None:
         """
@@ -147,11 +149,13 @@ class RemoveGleaningDirective(Directive):
         self,
         cfg: DJExecutableConfig,
         index: ProcessIndex,
+        target_op: Optional[int] = None,
     ) -> DirectiveResult:
         before = self._clone(cfg)
 
-        # Find target operator
-        target_idx = self.locator.find_index(index.identities)
+        target_idx = target_op
+        if target_idx is None:
+            target_idx = self.locator.find_index(index.identities)
         if target_idx is None:
             return DirectiveResult(
                 ok=False,

@@ -67,9 +67,12 @@ class RemoveRedundantOpDirective(Directive):
     This directive cleans up the pipeline by removing:
     - Duplicate operators (same type and params)
     - No-op operators that don't filter anything
+
+    Note: This is a GLOBAL directive - target_op parameter is ignored.
     """
 
     name = "remove_redundant_ops"
+    applicable_op_types = None
 
     def __init__(self, remove_duplicates: bool = True, remove_noops: bool = True) -> None:
         """
@@ -84,6 +87,7 @@ class RemoveRedundantOpDirective(Directive):
         self,
         cfg: DJExecutableConfig,
         index: ProcessIndex,
+        target_op: Optional[int] = None,
     ) -> DirectiveResult:
         before = self._clone(cfg)
         proc = before.get("process")

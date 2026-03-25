@@ -14,9 +14,9 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from data_juicer.planner.contracts.recipe import DJExecutableConfig, validate_executable_config
-from data_juicer.planner.optimize.directives.registry import DIRECTIVE_REGISTRY
-from data_juicer.planner.optimize.search.base import (
+from agentic_planner.contracts.recipe import DJExecutableConfig, validate_executable_config
+from agentic_planner.optimizer.directives import DIRECTIVE_REGISTRY
+from agentic_planner.optimizer.search.base import (
     BaseSearchStrategy,
     SearchConfig,
     SearchReport,
@@ -34,7 +34,9 @@ class RandomSearchConfig(BaseModel):
     )
     max_samples: int = Field(default=50, ge=1, le=500, description="Maximum samples to evaluate.")
     max_depth: int = Field(default=5, ge=1, le=20, description="Maximum chain depth per sample.")
-    keep_all: bool = Field(default=True, description="Keep all evaluated samples, not just improvements.")
+    keep_all: bool = Field(
+        default=True, description="Keep all evaluated samples, not just improvements."
+    )
 
     model_config = {"extra": "allow"}
 
@@ -85,8 +87,7 @@ class RandomSearchStrategy(BaseSearchStrategy):
 
         # Get valid directives
         valid_directives = [
-            d for d in self._random_config.expansion_directives
-            if d in DIRECTIVE_REGISTRY
+            d for d in self._random_config.expansion_directives if d in DIRECTIVE_REGISTRY
         ]
         if not valid_directives:
             return SearchReport(
