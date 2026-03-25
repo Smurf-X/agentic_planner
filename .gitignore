@@ -1,0 +1,59 @@
+# Virtual environment
+.venv/
+venv/
+env/
+.python311/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Embedding cache
+.embedding_cache/
+
+# mypy
+.mypy_cache/
+
+# ruff
+.ruff_cache/
+
+# Secrets - NEVER commit these
+examples/models_real.yaml
+*_real.yaml
+*_secret.yaml
+*.env
+.env*
+
+# Output files
+output/
