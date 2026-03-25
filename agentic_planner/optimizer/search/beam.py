@@ -5,10 +5,11 @@ Enhanced Beam search strategy with action-based optimization.
 Beam search maintains top-k candidates at each iteration and explores
 their neighbors. This enhanced version supports:
 - Action-based optimization (operator, directive) pairs
-- LLM-guided action selection (optional)
+- LLM-guided action selection with rich context
 - Multi-objective optimization (quality vs cost)
 - Pareto frontier tracking
 - Adaptive beam width
+- Action statistics tracking across search
 """
 
 from __future__ import annotations
@@ -23,6 +24,11 @@ from pydantic import BaseModel, Field
 from agentic_planner.contracts.cost import CostBreakdown
 from agentic_planner.contracts.recipe import DJExecutableConfig, validate_executable_config
 from agentic_planner.optimizer.action import Action, ActionSpace, ActionSpaceBuilder
+from agentic_planner.optimizer.action_context import (
+    ActionSelectionContext,
+    ActionStatsTracker,
+    TriedAction,
+)
 from agentic_planner.optimizer.directives.base import DirectiveResult
 from agentic_planner.optimizer.directives.registry import DIRECTIVE_REGISTRY
 from agentic_planner.optimizer.search.base import (
@@ -49,7 +55,7 @@ class BeamSearchConfig(BaseModel):
     )
 
     use_llm_selection: bool = Field(
-        default=False,
+        default=True,
         description="Use LLM to select promising actions.",
     )
 
@@ -68,7 +74,8 @@ class BeamSearchConfig(BaseModel):
         default=0.0, ge=0.0, le=1.0, description="Weight for cost in ranking (0=quality only)."
     )
     adaptive_beam: bool = Field(
-        default=False, description="Adaptively adjust beam width based on improvement."
+        default=False,
+        description="Adaptively adjust beam width based on improvement.",
     )
     min_beam_width: int = Field(default=2, ge=1, description="Minimum beam width when adaptive.")
     max_beam_width: int = Field(default=16, ge=1, description="Maximum beam width when adaptive.")
@@ -89,6 +96,8 @@ class BeamCandidate:
     trace: List[DirectiveResult]
     config_hash: str = ""
     used_actions: Set[Tuple[int, str]] = field(default_factory=set)
+    tried_actions: List[TriedAction] = field(default_factory=list)
+    execution_sample: List[Dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self):
         if not self.config_hash:
@@ -112,6 +121,10 @@ class BeamCandidate:
         cost_score = 1.0 / (1.0 + math.log1p(total_cost))
         return (1 - cost_weight) * quality_score + cost_weight * cost_score
 
+    def get_total_cost(self) -> float:
+        """Get total cost as a single number."""
+        return self.cost.llm_token_cost + self.cost.wall_time_sec
+
 
 class BeamSearchStrategy(BaseSearchStrategy):
     """
@@ -119,11 +132,12 @@ class BeamSearchStrategy(BaseSearchStrategy):
 
     Features:
     - Action-based: (operator, directive) pairs
-    - LLM-guided action selection (optional)
+    - LLM-guided action selection with rich context
     - Maintains top-k candidates at each iteration
     - Tracks Pareto frontier across all iterations
     - Supports cost-weighted ranking
     - Optional adaptive beam width
+    - Action statistics tracking for LLM guidance
     """
 
     def __init__(
@@ -141,6 +155,8 @@ class BeamSearchStrategy(BaseSearchStrategy):
         self._llm_selector = llm_selector
         self._rng = random.Random(config.seed)
         self._seen_hashes: Set[str] = set()
+        self._action_stats = ActionStatsTracker()
+        self._data_sample: List[Dict[str, Any]] = []
 
         if action_builder:
             self._action_builder = action_builder
@@ -157,6 +173,10 @@ class BeamSearchStrategy(BaseSearchStrategy):
     def set_llm_selector(self, selector: LLMActionSelector) -> None:
         """Set the LLM action selector."""
         self._llm_selector = selector
+
+    def set_data_sample(self, sample: List[Dict[str, Any]]) -> None:
+        """Set data sample for LLM context."""
+        self._data_sample = sample
 
     def search(self, root: DJExecutableConfig) -> SearchReport:
         """Execute beam search."""
@@ -175,14 +195,20 @@ class BeamSearchStrategy(BaseSearchStrategy):
         all_candidates: List[SearchResult] = []
         pareto_candidates: List[SearchResult] = []
 
-        root_cost, root_quality = self._evaluate(root)
+        root_result = self._evaluate_full(root)
+        root_outputs = (
+            root_result.outputs
+            if hasattr(root_result, "outputs") and isinstance(root_result.outputs, list)
+            else []
+        )
         root_beam = BeamCandidate(
             config=deepcopy(root),
-            cost=root_cost,
-            quality=root_quality,
+            cost=root_result.cost,
+            quality=root_result.quality,
             origin="root",
             trace=[],
             used_actions=set(),
+            execution_sample=root_outputs[:5],
         )
         self._seen_hashes.add(root_beam.config_hash)
 
@@ -208,6 +234,7 @@ class BeamSearchStrategy(BaseSearchStrategy):
                     available_actions,
                     beam,
                     iteration,
+                    all_candidates,
                 )
 
                 for action in actions_to_try:
@@ -232,18 +259,48 @@ class BeamSearchStrategy(BaseSearchStrategy):
                         continue
                     self._seen_hashes.add(child_hash)
 
-                    child_cost, child_quality = self._evaluate(child_config)
+                    child_result = self._evaluate_full(child_config)
+
+                    self._action_stats.record(
+                        action=action,
+                        before_quality=beam.quality,
+                        before_cost=beam.get_total_cost(),
+                        after_quality=child_result.quality,
+                        after_cost=child_result.cost.llm_token_cost
+                        + child_result.cost.wall_time_sec,
+                    )
+
+                    tried = TriedAction(
+                        action=action,
+                        result_quality=child_result.quality,
+                        result_cost=child_result.cost.llm_token_cost
+                        + child_result.cost.wall_time_sec,
+                        quality_change=child_result.quality - beam.quality,
+                        cost_change=(
+                            child_result.cost.llm_token_cost + child_result.cost.wall_time_sec
+                        )
+                        - beam.get_total_cost(),
+                        applied=True,
+                    )
 
                     new_used = beam.used_actions.copy()
                     new_used.add((action.operator_index, action.directive_name))
 
+                    child_outputs = (
+                        child_result.outputs
+                        if hasattr(child_result, "outputs")
+                        and isinstance(child_result.outputs, list)
+                        else []
+                    )
                     child = BeamCandidate(
                         config=child_config,
-                        cost=child_cost,
-                        quality=child_quality,
+                        cost=child_result.cost,
+                        quality=child_result.quality,
                         origin=f"{beam.origin}+{action.directive_name}[{action.operator_name}]",
                         trace=beam.trace + [step],
                         used_actions=new_used,
+                        tried_actions=beam.tried_actions + [tried],
+                        execution_sample=child_outputs[:5],
                     )
                     next_beams.append(child)
                     all_candidates.append(self._beam_to_result(child, iteration + 1))
@@ -307,20 +364,53 @@ class BeamSearchStrategy(BaseSearchStrategy):
             a for a in base_space if (a.operator_index, a.directive_name) not in beam.used_actions
         ]
 
+    def _determine_optimize_goal(
+        self, beam: BeamCandidate, all_candidates: List[SearchResult]
+    ) -> str:
+        """
+        Determine optimization goal based on current state.
+
+        Similar to docetl: if quality is above median, optimize for cost;
+        otherwise optimize for quality.
+        """
+        if not all_candidates:
+            return "quality"
+
+        qualities = [c.quality for c in all_candidates if c.quality > 0]
+        if not qualities:
+            return "quality"
+
+        qualities.sort()
+        median_quality = qualities[len(qualities) // 2]
+
+        if beam.quality > median_quality:
+            return "cost"
+        return "quality"
+
     def _select_actions(
         self,
         available_actions: List[Action],
         beam: BeamCandidate,
         iteration: int,
+        all_candidates: Optional[List[SearchResult]] = None,
     ) -> List[Action]:
         """Select actions to try for a beam."""
         if self._beam_config.use_llm_selection and self._llm_selector:
-            context = {
-                "current_config": beam.config,
-                "quality": beam.quality,
-                "cost": beam.cost.llm_token_cost,
-                "iteration": iteration,
-            }
+            optimize_goal = self._determine_optimize_goal(beam, all_candidates or [])
+
+            context = ActionSelectionContext(
+                config=beam.config,
+                quality=beam.quality,
+                cost=beam.get_total_cost(),
+                available_actions=available_actions,
+                execution_sample=beam.execution_sample,
+                data_sample=self._data_sample,
+                action_stats=self._action_stats,
+                tried_actions=beam.tried_actions,
+                optimize_goal=optimize_goal,
+                iteration=iteration,
+                max_iterations=self._beam_config.max_iterations,
+            )
 
             from agentic_planner.optimizer.action import ActionSpace
 
@@ -330,11 +420,10 @@ class BeamSearchStrategy(BaseSearchStrategy):
                 operator_count=0,
             )
 
-            result = self._llm_selector.select(
+            result = self._llm_selector.select_with_context(
                 temp_space,
                 context,
                 top_k=self._beam_config.llm_selection_top_k,
-                optimize_goal=self._beam_config.optimize_goal,
             )
             return result.selected_actions
 

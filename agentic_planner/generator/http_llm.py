@@ -44,10 +44,7 @@ class OpenAICompatibleJsonClient:
     ) -> None:
         self.model = model
         self._api_key = (
-            api_key
-            or os.environ.get("OPENAI_API_KEY")
-            or os.environ.get("DASHSCOPE_API_KEY")
-            or ""
+            api_key or os.environ.get("OPENAI_API_KEY") or os.environ.get("DASHSCOPE_API_KEY") or ""
         ).strip() or None
         self._base_url = (
             base_url
@@ -104,3 +101,51 @@ class OpenAICompatibleJsonClient:
             raise ValueError("empty assistant message content")
         text = content if isinstance(content, str) else str(content)
         return parse_json_object_strict(text)
+
+    def generate(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.3,
+    ) -> str:
+        """
+        Generate text response (non-JSON mode).
+
+        This method is used by LLMActionSelector for action selection.
+
+        Args:
+            system_prompt: System prompt
+            user_prompt: User prompt
+            temperature: Temperature for generation
+
+        Returns:
+            Generated text
+        """
+        if not self._api_key:
+            raise ValueError(
+                "api_key is required (pass api_key=... or set OPENAI_API_KEY in the environment).",
+            )
+        url = f"{self._base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+            **self._extra_headers,
+        }
+        messages: List[Dict[str, str]] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        body: Dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+
+        resp = self._client.post(url, headers=headers, json=body, timeout=self._timeout)
+        resp.raise_for_status()
+        data = resp.json()
+        try:
+            content = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ValueError(f"unexpected chat completions response shape: {data!r}") from exc
+        return content if isinstance(content, str) else str(content)

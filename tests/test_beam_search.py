@@ -15,6 +15,7 @@ from agentic_planner.optimizer.directives.adjust_threshold import (
 )
 from agentic_planner.contracts.recipe import DJExecutableConfig
 from agentic_planner.contracts.cost import CostBreakdown
+from agentic_planner.optimizer.evaluator import EvaluationResult
 
 
 @pytest.fixture
@@ -32,8 +33,19 @@ def sample_config() -> DJExecutableConfig:
 @pytest.fixture
 def mock_evaluator():
     evaluator = Mock()
-    evaluator.evaluate = Mock(
-        return_value=(CostBreakdown(llm_token_cost=0.1, wall_time_sec=1.0), 0.7)
+    cost = CostBreakdown(llm_token_cost=0.1, wall_time_sec=1.0)
+    evaluator.evaluate = Mock(return_value=(cost, 0.7))
+    evaluator.evaluate_full = Mock(
+        return_value=EvaluationResult(
+            cost=cost,
+            quality=0.7,
+            sample_size=1,
+            scores=[0.7],
+            reasonings=["test"],
+            errors=[],
+            outputs=[{"test": "output"}],
+            inputs=[{"test": "input"}],
+        )
     )
     return evaluator
 
@@ -44,7 +56,7 @@ class TestBeamSearchConfig:
 
         assert config.beam_width == 4
         assert config.max_iterations == 3
-        assert config.use_llm_selection == False
+        assert config.use_llm_selection == True
         assert config.track_pareto == True
 
     def test_custom_config(self):

@@ -5,7 +5,7 @@ End-to-end optimizer example with ModelRegistry support.
 This script demonstrates how to run the pipeline optimizer with:
 - 4 operators (2 filters + 2 LLM operators)
 - Fixed sampling (configurable samples)
-- BeamSearch strategy
+- BeamSearch strategy with LLM-guided action selection
 - Multiple model support via models.yaml
 
 Usage:
@@ -21,6 +21,7 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import re
 from pathlib import Path
@@ -33,8 +34,9 @@ from agentic_planner import (
     save_executable_config,
 )
 from agentic_planner.optimizer.evaluator import RealPipelineEvaluator, StubPipelineEvaluator
-from agentic_planner.optimizer.executor_adapter import StubExecutorAdapter
+from agentic_planner.optimizer.executor_adapter import DJExecutorAdapter, StubExecutorAdapter
 from agentic_planner.optimizer.action import ActionSpaceBuilder
+from agentic_planner.optimizer.llm_action_selector import LLMActionSelector
 from agentic_planner.optimizer.directives import (
     TightenFiltersDirective,
     LoosenFiltersDirective,
@@ -63,16 +65,15 @@ def create_pipeline_config(
     dataset_path: str, output_path: str, llm_model: str = "gpt-4o-mini"
 ) -> DJExecutableConfig:
     """Create initial pipeline configuration with 4 operators."""
+    import os
+
+    abs_dataset_path = os.path.abspath(dataset_path)
+    abs_output_path = os.path.abspath(output_path)
+
     return {
-        "dataset_path": dataset_path,
-        "export_path": output_path,
+        "dataset_path": abs_dataset_path,
+        "export_path": abs_output_path,
         "process": [
-            {
-                "language_id_score_filter": {
-                    "lang": "en",
-                    "min_score": 0.8,
-                }
-            },
             {
                 "text_length_filter": {
                     "min_len": 20,
@@ -80,18 +81,25 @@ def create_pipeline_config(
                 }
             },
             {
-                "llm_quality_score_filter": {
-                    "api_model": llm_model,
-                    "min_score": 0.5,
-                }
-            },
-            {
-                "extract_keyword_mapper": {
-                    "api_model": llm_model,
+                "language_id_score_filter": {
+                    "lang": "en",
+                    "min_score": 0.8,
                 }
             },
         ],
     }
+
+
+def load_data_sample(dataset_path: str, sample_size: int) -> list:
+    """Load data sample from dataset."""
+    data = []
+    with open(dataset_path, "r", encoding="utf-8") as f:
+        for i, line in enumerate(f):
+            if i >= sample_size:
+                break
+            if line.strip():
+                data.append(json.loads(line))
+    return data
 
 
 def main():
@@ -125,6 +133,11 @@ def main():
         default="gpt-4o-mini",
         help="Initial model for Pipeline LLM operators",
     )
+    parser.add_argument(
+        "--selector-model",
+        default="",
+        help="Model for action selection (defaults to judge model)",
+    )
 
     # Search configuration
     parser.add_argument(
@@ -146,6 +159,17 @@ def main():
         help="Maximum iterations",
     )
     parser.add_argument(
+        "--llm-selection-top-k",
+        type=int,
+        default=10,
+        help="Number of actions for LLM to select",
+    )
+    parser.add_argument(
+        "--no-llm-selection",
+        action="store_true",
+        help="Disable LLM-guided action selection",
+    )
+    parser.add_argument(
         "--stub",
         action="store_true",
         help="Use stub evaluator (no real API calls)",
@@ -163,7 +187,7 @@ def main():
     print("=" * 60)
 
     # Load model registry
-    print("\n[1/6] Loading model configuration...")
+    print("\n[1/7] Loading model configuration...")
 
     if args.models_config:
         config_path = args.models_config
@@ -198,7 +222,7 @@ def main():
         print(f"  - Judge model: {registry.get_judge_config().model}")
 
     # Create pipeline config
-    print("\n[2/6] Creating initial pipeline config...")
+    print("\n[2/7] Creating initial pipeline config...")
     initial_config = create_pipeline_config(
         dataset_path, output_path, llm_model=args.pipeline_llm_model
     )
@@ -207,8 +231,13 @@ def main():
     print(f"  - Operators: {len(initial_config['process'])}")
     print(f"  - Pipeline LLM model: {args.pipeline_llm_model}")
 
+    # Load data sample
+    print("\n[3/7] Loading data sample...")
+    data_sample = load_data_sample(dataset_path, args.sample_size)
+    print(f"  - Sample size: {len(data_sample)}")
+
     # Setup evaluator
-    print("\n[3/6] Setting up evaluator...")
+    print("\n[4/7] Setting up evaluator...")
 
     eval_config = EvalConfig(
         sample_size=args.sample_size,
@@ -221,7 +250,20 @@ def main():
         evaluator = StubPipelineEvaluator(eval_config)
     else:
         judge_client = registry.create_judge_client()
-        executor_adapter = StubExecutorAdapter(dataset_path=dataset_path)
+        # Note: DJExecutorAdapter has a path issue on Windows due to DJ's logger
+        # using relative paths with ".." which Windows doesn't allow in filenames.
+        # Using StubExecutorAdapter for now until DJ fixes this.
+        # To use real execution, run on Linux/macOS or wait for DJ fix.
+        import platform
+
+        if platform.system() == "Windows":
+            print("  - Using STUB executor (DJ has Windows path issues)")
+            executor_adapter = StubExecutorAdapter(dataset_path=dataset_path)
+        else:
+            executor_adapter = DJExecutorAdapter(
+                dataset_path=dataset_path,
+                work_dir=str(project_dir / ".dj_work"),
+            )
 
         evaluator = RealPipelineEvaluator(
             eval_config=eval_config,
@@ -235,7 +277,7 @@ def main():
     print(f"  - Sample size: {args.sample_size}")
 
     # Configure action space
-    print("\n[4/6] Configuring action space...")
+    print("\n[5/7] Configuring action space...")
 
     action_builder = ActionSpaceBuilder(
         directives=[
@@ -248,12 +290,44 @@ def main():
     if not args.stub and registry:
         print(f"  - Model swap: {len(registry.get_candidate_models())} candidate models")
 
+    # Setup LLM Action Selector
+    print("\n[6/7] Setting up LLM Action Selector...")
+
+    use_llm_selection = not args.no_llm_selection
+
+    if use_llm_selection and not args.stub:
+        selector_model = args.selector_model
+        if not selector_model:
+            candidate_models = registry.get_candidate_models()
+            if candidate_models:
+                selector_model = candidate_models[0]
+            else:
+                selector_model = registry.list_models()[0] if registry.list_models() else None
+
+        if selector_model:
+            selector_client = registry.create_client(selector_model)
+            llm_selector = LLMActionSelector(
+                llm_client=selector_client,
+                model=selector_model,
+            )
+            print(f"  - Enabled: True")
+            print(f"  - Selector model: {selector_model}")
+            print(f"  - Top-k: {args.llm_selection_top_k}")
+        else:
+            llm_selector = None
+            print(f"  - Enabled: False (no model available)")
+    else:
+        llm_selector = None
+        print(f"  - Enabled: False (fallback to first-k)")
+
     # Configure BeamSearch
-    print("\n[5/6] Configuring BeamSearch strategy...")
+    print("\n[7/7] Configuring BeamSearch strategy...")
 
     beam_config = BeamSearchConfig(
         beam_width=args.beam_width,
         max_iterations=args.max_iterations,
+        use_llm_selection=use_llm_selection,
+        llm_selection_top_k=args.llm_selection_top_k,
         track_pareto=True,
         cost_weight=0.3,
     )
@@ -262,18 +336,24 @@ def main():
         config=beam_config,
         evaluator=evaluator,
         action_builder=action_builder,
+        llm_selector=llm_selector,
     )
+    strategy.set_data_sample(data_sample)
+
     print(f"  - Beam width: {args.beam_width}")
     print(f"  - Max iterations: {args.max_iterations}")
+    print(f"  - LLM selection: {use_llm_selection}")
 
     # Run optimization
-    print("\n[6/6] Running optimization...")
-    print("-" * 60)
+    print("\n" + "=" * 60)
+    print("Running optimization...")
+    print("=" * 60)
 
     report = strategy.search(initial_config)
 
+    print("\n" + "-" * 60)
+    print("[Results]")
     print("-" * 60)
-    print("\n[Results]")
     print(f"  - Success: {report.ok}")
     print(f"  - Total candidates: {len(report.candidates)}")
     print(f"  - Total evaluations: {report.total_evaluations}")
@@ -308,7 +388,7 @@ def main():
                 str(project_dir / "output" / f"pareto_{i + 1}.yaml"),
             )
 
-    print("\n[Saved files]")
+    print(f"\n[Saved files]")
     print(f"  - pareto_*.yaml in {project_dir / 'output'}")
 
     if report.errors:

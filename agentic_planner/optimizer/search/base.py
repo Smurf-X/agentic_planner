@@ -150,10 +150,46 @@ class BaseSearchStrategy(ABC):
     def _evaluate(self, config: DJExecutableConfig) -> tuple[CostBreakdown, float]:
         """Evaluate a configuration and track count."""
         if self._evaluator is None:
-            # Return dummy values
             return CostBreakdown(), 0.5
         self._evaluated_count += 1
         return self._evaluator.evaluate(config)
+
+    def _evaluate_full(self, config: DJExecutableConfig) -> Any:
+        """
+        Evaluate a configuration and return full result.
+
+        Returns EvaluationResult if evaluator supports it, otherwise a simple result.
+        """
+        if self._evaluator is None:
+            from agentic_planner.optimizer.evaluator import EvaluationResult
+
+            return EvaluationResult(
+                cost=CostBreakdown(),
+                quality=0.5,
+                sample_size=1,
+                scores=[0.5],
+                reasonings=["No evaluator configured"],
+                errors=[],
+                outputs=[],
+                inputs=[],
+            )
+        self._evaluated_count += 1
+        if hasattr(self._evaluator, "evaluate_full"):
+            return self._evaluator.evaluate_full(config)
+        else:
+            cost, quality = self._evaluator.evaluate(config)
+            from agentic_planner.optimizer.evaluator import EvaluationResult
+
+            return EvaluationResult(
+                cost=cost,
+                quality=quality,
+                sample_size=1,
+                scores=[quality],
+                reasonings=[],
+                errors=[],
+                outputs=[],
+                inputs=[],
+            )
 
     def _compute_pareto_front(self, candidates: List[SearchResult]) -> List[SearchResult]:
         """

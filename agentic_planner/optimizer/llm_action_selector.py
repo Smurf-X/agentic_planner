@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 if TYPE_CHECKING:
     from agentic_planner.optimizer.action import Action, ActionSpace
+    from agentic_planner.optimizer.action_context import ActionSelectionContext
 
 
 @dataclass
@@ -72,6 +73,55 @@ class LLMActionSelector:
         """Set the LLM client."""
         self._llm_client = client
 
+    def select_with_context(
+        self,
+        action_space: ActionSpace,
+        context: ActionSelectionContext,
+        top_k: int = 10,
+    ) -> ActionSelectionResult:
+        """
+        Select top-k actions using LLM with rich context.
+
+        This method uses ActionSelectionContext which provides:
+        - Execution results sample
+        - Data sample
+        - Action performance history
+        - Tried actions with results
+        - Dynamic optimization goal
+
+        Args:
+            action_space: Available actions
+            context: Rich context for action selection
+            top_k: Number of actions to select
+
+        Returns:
+            ActionSelectionResult with selected actions
+        """
+        if not self._llm_client:
+            return self._fallback_select(action_space, top_k)
+
+        if len(action_space) <= top_k:
+            return ActionSelectionResult(selected_actions=list(action_space))
+
+        prompt = self._build_rich_prompt(action_space, context, top_k)
+
+        for _ in range(self._max_retries + 1):
+            try:
+                response = self._llm_client.generate(
+                    system_prompt=self._get_rich_system_prompt(),
+                    user_prompt=prompt,
+                    temperature=self._temperature,
+                )
+
+                result = self._parse_response(action_space, top_k, response)
+                if result.selected_actions:
+                    return result
+
+            except Exception:
+                continue
+
+        return self._fallback_select(action_space, top_k)
+
     def select(
         self,
         action_space: ActionSpace,
@@ -80,7 +130,7 @@ class LLMActionSelector:
         optimize_goal: str = "quality",
     ) -> ActionSelectionResult:
         """
-        Select top-k actions using LLM.
+        Select top-k actions using LLM (legacy interface).
 
         Args:
             action_space: Available actions
@@ -106,11 +156,11 @@ class LLMActionSelector:
                     temperature=self._temperature,
                 )
 
-                result = self._parse_response(response, action_space, top_k)
+                result = self._parse_response(action_space, top_k, response)
                 if result.selected_actions:
                     return result
 
-            except Exception as e:
+            except Exception:
                 continue
 
         return self._fallback_select(action_space, top_k)
@@ -169,6 +219,95 @@ Output your selection as a JSON object with the following format:
   ],
   "reasoning": "Overall strategy explanation"
 }"""
+
+    def _get_rich_system_prompt(self) -> str:
+        """Get rich system prompt for action selection with full context."""
+        return """You are an expert at optimizing data processing pipelines.
+Your task is to select the most promising optimization actions based on the current pipeline state and execution history.
+
+You will be provided with:
+1. Current pipeline configuration and metrics
+2. Execution results sample (showing actual outputs)
+3. Data sample (input data characteristics)
+4. Action performance history (which actions have worked well)
+5. Already tried actions in this optimization path
+6. Current optimization goal
+
+Your goal is to balance:
+- Exploitation: Select actions that have historically performed well
+- Exploration: Try actions that haven't been tested yet
+- Goal alignment: Focus on improving the current optimization target
+
+Output your selection as a JSON object:
+{
+  "selected": [
+    {"operator_index": 0, "directive": "directive_name", "reason": "brief reason"},
+    ...
+  ],
+  "reasoning": "Overall strategy explanation"
+}"""
+
+    def _build_rich_prompt(
+        self,
+        action_space: ActionSpace,
+        context: ActionSelectionContext,
+        top_k: int,
+    ) -> str:
+        """Build rich prompt with full context for action selection."""
+        import yaml
+
+        actions_desc = []
+        for i, action in enumerate(action_space):
+            actions_desc.append(
+                f"  [{i}] Operator: {action.operator_name} (index {action.operator_index}), "
+                f"Directive: {action.directive_name}"
+            )
+
+        config_yaml = yaml.dump(context.config, allow_unicode=True, default_flow_style=False)
+        if len(config_yaml) > 3000:
+            config_yaml = config_yaml[:3000] + "\n... (truncated)"
+
+        prompt = f"""Analyze the pipeline and select the {top_k} most promising optimization actions.
+
+**Current Pipeline Configuration:**
+```yaml
+{config_yaml}
+```
+
+**Current Metrics:**
+- Quality: {context.quality:.4f}
+- Cost: ${context.cost:.2f}
+
+**Execution Results Sample:**
+{context.get_execution_sample_summary(max_chars=2000)}
+
+**Data Sample:**
+{context.get_data_sample_summary(max_chars=1000)}
+
+**Action Performance History:**
+{context.action_stats.get_summary()}
+
+**Already Tried in This Path:**
+{context.get_tried_action_summary(limit=10)}
+
+**Optimization Goal:** {context.optimize_goal}
+
+**Iteration:** {context.iteration + 1} / {context.max_iterations}
+
+**Available Actions ({len(action_space)} total):**
+{chr(10).join(actions_desc)}
+
+Select {top_k} actions that are most likely to improve {context.optimize_goal}.
+
+Consider:
+1. Which operators have the most room for improvement?
+2. Which directives have worked well historically?
+3. What hasn't been tried yet in this path?
+4. Is the current optimization goal quality or cost?
+
+Prioritize exploration of untested actions while balancing with exploitation of proven performers."""
+
+        return prompt
 
     def _build_prompt(
         self,
@@ -233,9 +372,9 @@ Output a JSON object mapping action index to predicted effectiveness score (0.0-
 
     def _parse_response(
         self,
-        response: str,
         action_space: ActionSpace,
         top_k: int,
+        response: str,
     ) -> ActionSelectionResult:
         """Parse LLM response into selected actions."""
         text = response.strip()

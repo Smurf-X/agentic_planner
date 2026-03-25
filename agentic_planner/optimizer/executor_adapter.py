@@ -13,6 +13,7 @@ Data-Juicer pipeline execution, including:
 from __future__ import annotations
 
 import json
+import os
 import random
 import time
 from dataclasses import dataclass, field
@@ -358,12 +359,9 @@ class DJExecutorAdapter(ExecutorAdapter):
         3. Runs the DJ executor
         4. Collects outputs and token usage
         """
-        import tempfile
-
         start_time = time.time()
 
         try:
-            # Load and sample data
             data = self.load_dataset()
             if not data:
                 cfg_path = cfg.get("dataset_path")
@@ -379,26 +377,25 @@ class DJExecutorAdapter(ExecutorAdapter):
 
             samples = self.sample_data(data, sample_size, random_seed)
 
-            # Create temporary files
             work_path = Path(self._work_dir)
             work_path.mkdir(parents=True, exist_ok=True)
 
-            with tempfile.TemporaryDirectory(dir=str(work_path)) as tmpdir:
-                # Write sample data
-                sample_path = Path(tmpdir) / "sample.jsonl"
-                with sample_path.open("w", encoding="utf-8") as f:
-                    for item in samples:
-                        f.write(json.dumps(item, ensure_ascii=False) + "\n")
+            run_dir = work_path / f"run_{random_seed}_{sample_size}"
+            run_dir.mkdir(parents=True, exist_ok=True)
 
-                # Prepare config for execution
-                exec_cfg = dict(cfg)
-                exec_cfg["dataset_path"] = str(sample_path)
-                exec_cfg["export_path"] = str(Path(tmpdir) / "output.jsonl")
+            sample_path = run_dir / "sample.jsonl"
+            with sample_path.open("w", encoding="utf-8") as f:
+                for item in samples:
+                    f.write(json.dumps(item, ensure_ascii=False) + "\n")
 
-                # Run the pipeline using real DJ executor
-                outputs, token_usage = self._run_pipeline(exec_cfg, tmpdir)
+            output_path = run_dir / "output.jsonl"
 
-            # Load ground truth
+            exec_cfg = dict(cfg)
+            exec_cfg["dataset_path"] = str(sample_path)
+            exec_cfg["export_path"] = str(output_path)
+
+            outputs, token_usage = self._run_pipeline(exec_cfg, str(run_dir))
+
             ground_truths = self.load_ground_truth() if self._ground_truth_path else []
 
             return SampleExecutionResult(
@@ -431,25 +428,30 @@ class DJExecutorAdapter(ExecutorAdapter):
         This implementation uses fixed samples to ensure consistent
         evaluation throughout the optimization process.
         """
-        import tempfile
-
         start_time = time.time()
 
         try:
             work_path = Path(self._work_dir)
             work_path.mkdir(parents=True, exist_ok=True)
 
-            with tempfile.TemporaryDirectory(dir=str(work_path)) as tmpdir:
-                sample_path = Path(tmpdir) / "sample.jsonl"
-                with sample_path.open("w", encoding="utf-8") as f:
-                    for item in samples:
-                        f.write(json.dumps(item, ensure_ascii=False) + "\n")
+            import uuid
 
-                exec_cfg = dict(cfg)
-                exec_cfg["dataset_path"] = str(sample_path)
-                exec_cfg["export_path"] = str(Path(tmpdir) / "output.jsonl")
+            run_id = str(uuid.uuid4())[:8]
+            run_dir = work_path / run_id
+            run_dir.mkdir(parents=True, exist_ok=True)
 
-                outputs, token_usage = self._run_pipeline(exec_cfg, tmpdir)
+            sample_path = run_dir / "sample.jsonl"
+            with sample_path.open("w", encoding="utf-8") as f:
+                for item in samples:
+                    f.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+            output_path = run_dir / "output.jsonl"
+
+            exec_cfg = dict(cfg)
+            exec_cfg["dataset_path"] = str(sample_path)
+            exec_cfg["export_path"] = str(output_path)
+
+            outputs, token_usage = self._run_pipeline(exec_cfg, str(run_dir))
 
             ground_truths = self.load_ground_truth() if self._ground_truth_path else []
 
@@ -480,49 +482,50 @@ class DJExecutorAdapter(ExecutorAdapter):
         """
         Execute the pipeline using real Data-Juicer executor.
 
-        This method integrates with the actual DJ execution engine and
-        collects token usage from API calls when available.
+        Args:
+            cfg: Pipeline configuration
+            work_dir: Working directory for this run
+
+        Returns:
+            Tuple of (outputs list, token_usage dict)
         """
         from data_juicer.config import init_configs
         from data_juicer.core import DefaultExecutor
-
-        output_path = Path(cfg.get("export_path", ""))
-
-        # Build command line args for init_configs
         import yaml
 
-        config_path = Path(work_dir) / "pipeline_config.yaml"
+        work_dir = os.path.abspath(work_dir)
+        config_path = os.path.join(work_dir, "pipeline_config.yaml")
+        output_path = cfg.get("export_path", os.path.join(work_dir, "output.jsonl"))
 
-        # Enable tracer for token tracking
         exec_cfg = dict(cfg)
-        exec_cfg["open_tracer"] = True
         exec_cfg["work_dir"] = work_dir
+        exec_cfg["export_path"] = output_path
 
-        with config_path.open("w", encoding="utf-8") as f:
+        with open(config_path, "w", encoding="utf-8") as f:
             yaml.dump(exec_cfg, f, allow_unicode=True, default_flow_style=False)
 
         try:
-            # Initialize DJ config
-            args = ["--config", str(config_path)]
+            args = ["--config", config_path]
             dj_cfg = init_configs(args=args)
 
-            # Create and run executor
             executor = DefaultExecutor(dj_cfg)
             executor.run(skip_return=True)
 
         except Exception as e:
             print(f"DJ execution error: {e}")
+            import traceback
+
+            traceback.print_exc()
             return [], {"prompt_tokens": 0, "completion_tokens": 0, "model_usage": {}}
 
-        # Collect outputs
         outputs = []
-        if output_path.exists():
-            with output_path.open("r", encoding="utf-8") as f:
+        output_path_obj = Path(output_path)
+        if output_path_obj.exists():
+            with output_path_obj.open("r", encoding="utf-8") as f:
                 for line in f:
                     if line.strip():
                         outputs.append(json.loads(line))
 
-        # Collect token usage
         token_usage = self._collect_token_usage(cfg, outputs, work_dir)
 
         return outputs, token_usage
@@ -537,11 +540,9 @@ class DJExecutorAdapter(ExecutorAdapter):
         Collect token usage from pipeline execution.
 
         For LLM operators, estimate token usage based on input/output sizes.
-        This is a pragmatic approach that works without modifying DJ core.
         """
         process = cfg.get("process", [])
 
-        # Known LLM operators that make API calls
         llm_ops = {
             "llm_analysis_filter",
             "llm_filter",
@@ -556,13 +557,13 @@ class DJExecutorAdapter(ExecutorAdapter):
             "extract_event_mapper",
             "extract_entity_relation_mapper",
             "extract_entity_attribute_mapper",
+            "llm_quality_score_filter",
         }
 
         total_prompt = 0
         total_completion = 0
         model_usage: Dict[str, Dict[str, int]] = {}
 
-        # Check which LLM ops are in the pipeline
         used_llm_ops = []
         for step in process:
             if not isinstance(step, dict):
@@ -571,21 +572,18 @@ class DJExecutorAdapter(ExecutorAdapter):
             if op_name in llm_ops:
                 params = step.get(op_name, {})
                 if isinstance(params, dict):
-                    model = params.get("api_model") or params.get("model") or "gpt-4o"
+                    model = params.get("api_model") or params.get("model") or "unknown"
                     used_llm_ops.append((op_name, model))
 
         if not used_llm_ops:
             return {"prompt_tokens": 0, "completion_tokens": 0, "model_usage": {}}
 
-        # Estimate tokens from outputs
         for output in outputs:
             text = output.get("text", "")
-            # Rough token estimation: ~4 chars per token for English
             output_tokens = len(text) // 4
 
             for op_name, model in used_llm_ops:
-                # Estimate input tokens (typically larger than output)
-                input_tokens = output_tokens * 2  # Rough estimate
+                input_tokens = output_tokens * 2
 
                 total_prompt += input_tokens
                 total_completion += output_tokens

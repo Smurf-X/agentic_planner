@@ -234,6 +234,8 @@ class EvaluationResult:
     scores: List[float] = field(default_factory=list)
     reasonings: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
+    outputs: List[Dict[str, Any]] = field(default_factory=list)
+    inputs: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class RealPipelineEvaluator(BaseEvaluator):
@@ -372,6 +374,8 @@ class RealPipelineEvaluator(BaseEvaluator):
                     scores=[],
                     reasonings=[],
                     errors=["No samples available"],
+                    outputs=[],
+                    inputs=[],
                 )
 
             exec_result = self._executor_adapter.run_on_fixed_samples(
@@ -388,6 +392,8 @@ class RealPipelineEvaluator(BaseEvaluator):
                     scores=[],
                     reasonings=[],
                     errors=errors,
+                    outputs=[],
+                    inputs=[],
                 )
 
             inputs = self._fixed_samples
@@ -425,6 +431,8 @@ class RealPipelineEvaluator(BaseEvaluator):
             scores=scores,
             reasonings=reasonings,
             errors=errors,
+            outputs=outputs if outputs else [],
+            inputs=inputs if inputs else [],
         )
 
     def _stub_evaluate(self, cfg: DJExecutableConfig) -> EvaluationResult:
@@ -438,6 +446,8 @@ class RealPipelineEvaluator(BaseEvaluator):
             scores=[q],
             reasonings=["Stub evaluation (no executor)"],
             errors=[],
+            outputs=[],
+            inputs=[],
         )
 
 
