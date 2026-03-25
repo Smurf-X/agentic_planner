@@ -1,24 +1,28 @@
 # -*- coding: utf-8 -*-
 """
-End-to-end optimizer example.
+End-to-end optimizer example with ModelRegistry support.
 
 This script demonstrates how to run the pipeline optimizer with:
 - 4 operators (2 filters + 2 LLM operators)
-- Fixed sampling (10 samples)
+- Fixed sampling (configurable samples)
 - BeamSearch strategy
+- Multiple model support via models.yaml
 
 Usage:
     # Stub mode (no API calls, for testing)
     python examples/run_optimizer.py --stub --sample-size 10
 
-    # Real mode with API
-    python examples/run_optimizer.py \
-        --judge-api-key YOUR_API_KEY \
-        --judge-base-url https://api.openai.com/v1 \
-        --judge-model gpt-4o-mini
+    # With model configuration file
+    python examples/run_optimizer.py --models-config examples/models.yaml
+
+    # Or use environment variables
+    export OPENAI_API_KEY="your-key"
+    python examples/run_optimizer.py --sample-size 10
 """
 
 import argparse
+import os
+import re
 from pathlib import Path
 
 from agentic_planner import (
@@ -28,7 +32,6 @@ from agentic_planner import (
     BeamSearchStrategy,
     save_executable_config,
 )
-from agentic_planner.generator.http_llm import OpenAICompatibleJsonClient
 from agentic_planner.optimizer.evaluator import RealPipelineEvaluator, StubPipelineEvaluator
 from agentic_planner.optimizer.executor_adapter import StubExecutorAdapter
 from agentic_planner.optimizer.action import ActionSpaceBuilder
@@ -36,19 +39,30 @@ from agentic_planner.optimizer.directives import (
     TightenFiltersDirective,
     LoosenFiltersDirective,
 )
+from agentic_planner.optimizer.model_registry import ModelRegistry, ModelsConfig
+
+
+def expand_env_vars(value):
+    """Recursively expand environment variables in strings."""
+    if isinstance(value, str):
+        pattern = r"\$\{([^}]+)\}"
+
+        def replace(match):
+            var_name = match.group(1)
+            return os.environ.get(var_name, "")
+
+        return re.sub(pattern, replace, value)
+    elif isinstance(value, dict):
+        return {k: expand_env_vars(v) for k, v in value.items()}
+    elif isinstance(value, list):
+        return [expand_env_vars(item) for item in value]
+    return value
 
 
 def create_pipeline_config(
     dataset_path: str, output_path: str, llm_model: str = "gpt-4o-mini"
 ) -> DJExecutableConfig:
-    """
-    Create initial pipeline configuration with 4 operators.
-
-    Args:
-        dataset_path: Path to input dataset
-        output_path: Path for output
-        llm_model: Model to use for LLM operators in pipeline
-    """
+    """Create initial pipeline configuration with 4 operators."""
     return {
         "dataset_path": dataset_path,
         "export_path": output_path,
@@ -81,28 +95,60 @@ def create_pipeline_config(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run pipeline optimizer")
+    parser = argparse.ArgumentParser(description="Run pipeline optimizer with ModelRegistry")
 
-    # Judge LLM configuration (for LLM-as-Judge evaluation)
-    parser.add_argument("--judge-api-key", default="", help="LLM API key for Judge")
+    # Configuration file
     parser.add_argument(
-        "--judge-base-url", default="https://api.openai.com/v1", help="LLM API base URL for Judge"
+        "--models-config",
+        default="",
+        help="Path to models.yaml configuration file",
     )
-    parser.add_argument("--judge-model", default="gpt-4o-mini", help="Model for LLM-as-Judge")
 
-    # Pipeline LLM configuration (for operators inside pipeline)
+    # Override options (when not using config file)
     parser.add_argument(
-        "--pipeline-llm-model", default="gpt-4o-mini", help="Model for Pipeline LLM operators"
+        "--judge-api-key",
+        default="",
+        help="LLM API key for Judge (or set OPENAI_API_KEY env var)",
+    )
+    parser.add_argument(
+        "--judge-base-url",
+        default="https://api.openai.com/v1",
+        help="LLM API base URL for Judge",
+    )
+    parser.add_argument(
+        "--judge-model",
+        default="gpt-4o-mini",
+        help="Model for LLM-as-Judge",
+    )
+    parser.add_argument(
+        "--pipeline-llm-model",
+        default="gpt-4o-mini",
+        help="Initial model for Pipeline LLM operators",
     )
 
     # Search configuration
     parser.add_argument(
-        "--sample-size", type=int, default=10, help="Number of samples for evaluation"
+        "--sample-size",
+        type=int,
+        default=10,
+        help="Number of samples for evaluation",
     )
-    parser.add_argument("--beam-width", type=int, default=3, help="Beam width")
-    parser.add_argument("--max-iterations", type=int, default=2, help="Maximum iterations")
     parser.add_argument(
-        "--stub", action="store_true", help="Use stub evaluator (no real API calls)"
+        "--beam-width",
+        type=int,
+        default=3,
+        help="Beam width",
+    )
+    parser.add_argument(
+        "--max-iterations",
+        type=int,
+        default=2,
+        help="Maximum iterations",
+    )
+    parser.add_argument(
+        "--stub",
+        action="store_true",
+        help="Use stub evaluator (no real API calls)",
     )
     args = parser.parse_args()
 
@@ -116,7 +162,43 @@ def main():
     print("Pipeline Optimizer - End-to-End Example")
     print("=" * 60)
 
-    print("\n[1/5] Creating initial pipeline config...")
+    # Load model registry
+    print("\n[1/6] Loading model configuration...")
+
+    if args.models_config:
+        config_path = args.models_config
+        if not Path(config_path).is_absolute():
+            config_path = str(project_dir / config_path)
+
+        print(f"  - Config file: {config_path}")
+
+        import yaml
+
+        with open(config_path, "r", encoding="utf-8") as f:
+            raw_config = yaml.safe_load(f)
+
+        expanded_config = expand_env_vars(raw_config)
+        models_config = ModelsConfig.model_validate(expanded_config)
+        registry = ModelRegistry(models_config)
+
+        print(f"  - Judge model: {registry.get_judge_config().model}")
+        print(f"  - Pipeline models: {registry.list_models()}")
+        print(f"  - Candidate models: {registry.get_candidate_models()}")
+    else:
+        print("  - Using environment variables")
+        registry = ModelRegistry.default()
+
+        if args.judge_api_key:
+            registry._config.judge.api_key = args.judge_api_key
+        if args.judge_base_url:
+            registry._config.judge.base_url = args.judge_base_url
+        if args.judge_model:
+            registry._config.judge.model = args.judge_model
+
+        print(f"  - Judge model: {registry.get_judge_config().model}")
+
+    # Create pipeline config
+    print("\n[2/6] Creating initial pipeline config...")
     initial_config = create_pipeline_config(
         dataset_path, output_path, llm_model=args.pipeline_llm_model
     )
@@ -125,37 +207,36 @@ def main():
     print(f"  - Operators: {len(initial_config['process'])}")
     print(f"  - Pipeline LLM model: {args.pipeline_llm_model}")
 
-    print("\n[2/5] Setting up evaluator...")
+    # Setup evaluator
+    print("\n[3/6] Setting up evaluator...")
+
     eval_config = EvalConfig(
         sample_size=args.sample_size,
         random_seed=42,
         task_description="Clean and improve English text data",
     )
 
-    if args.stub or not args.judge_api_key:
+    if args.stub:
         print("  - Using STUB evaluator (no real API calls)")
-        print("  - Judge model: N/A (stub mode)")
         evaluator = StubPipelineEvaluator(eval_config)
     else:
-        print(f"  - Judge model: {args.judge_model}")
-        print(f"  - Judge base URL: {args.judge_base_url}")
-
-        judge_client = OpenAICompatibleJsonClient(
-            model=args.judge_model,
-            api_key=args.judge_api_key,
-            base_url=args.judge_base_url,
-        )
-
+        judge_client = registry.create_judge_client()
         executor_adapter = StubExecutorAdapter(dataset_path=dataset_path)
 
         evaluator = RealPipelineEvaluator(
             eval_config=eval_config,
             llm_client=judge_client,
             executor_adapter=executor_adapter,
+            model_registry=registry,
         )
+        print(f"  - Judge model: {registry.get_judge_config().model}")
+        print(f"  - Price table: {len(registry.get_price_table())} models")
+
     print(f"  - Sample size: {args.sample_size}")
 
-    print("\n[3/5] Configuring action space...")
+    # Configure action space
+    print("\n[4/6] Configuring action space...")
+
     action_builder = ActionSpaceBuilder(
         directives=[
             TightenFiltersDirective(intensity=0.1),
@@ -164,7 +245,9 @@ def main():
     )
     print(f"  - Directives: tighten_filters, loosen_filters")
 
-    print("\n[4/5] Configuring BeamSearch strategy...")
+    # Configure BeamSearch
+    print("\n[5/6] Configuring BeamSearch strategy...")
+
     beam_config = BeamSearchConfig(
         beam_width=args.beam_width,
         max_iterations=args.max_iterations,
@@ -180,7 +263,8 @@ def main():
     print(f"  - Beam width: {args.beam_width}")
     print(f"  - Max iterations: {args.max_iterations}")
 
-    print("\n[5/5] Running optimization...")
+    # Run optimization
+    print("\n[6/6] Running optimization...")
     print("-" * 60)
 
     report = strategy.search(initial_config)

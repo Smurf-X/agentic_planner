@@ -15,7 +15,7 @@ import random
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, Union, runtime_checkable
 
 from agentic_planner.contracts.cost import CostBreakdown, compute_token_cost
 from agentic_planner.contracts.eval_protocol import EvalConfig, EvaluationMode
@@ -23,6 +23,7 @@ from agentic_planner.contracts.recipe import DJExecutableConfig
 
 if TYPE_CHECKING:
     from agentic_planner.generator.llm import BaseLLMClient
+    from agentic_planner.optimizer.model_registry import ModelRegistry
 
 
 @runtime_checkable
@@ -243,7 +244,7 @@ class RealPipelineEvaluator(BaseEvaluator):
     1. Uses pre-sampled data (fixed throughout optimization)
     2. Runs the pipeline on the sample
     3. Evaluates outputs using LLM-as-a-judge or ground truth
-    4. Collects cost metrics
+    4. Collects cost metrics using ModelRegistry prices
     """
 
     def __init__(
@@ -252,19 +253,31 @@ class RealPipelineEvaluator(BaseEvaluator):
         llm_client: Optional["BaseLLMClient"] = None,
         price_per_million: Optional[Dict[str, float]] = None,
         executor_adapter: Optional[Any] = None,
+        model_registry: Optional["ModelRegistry"] = None,
     ) -> None:
         """
         Args:
             eval_config: Evaluation configuration
             llm_client: LLM client for judge calls
-            price_per_million: Token price per model
+            price_per_million: Token price per model (deprecated, use model_registry)
             executor_adapter: Adapter for running DJ pipelines
+            model_registry: ModelRegistry for price lookup and client creation
         """
         super().__init__(eval_config)
         self._llm_client = llm_client
-        self._price_per_million = price_per_million or {}
         self._executor_adapter = executor_adapter
-        self._judge_evaluator = LlmJudgeEvaluator(eval_config, llm_client, price_per_million)
+        self._model_registry = model_registry
+
+        if model_registry:
+            self._price_per_million = model_registry.get_price_table()
+        else:
+            self._price_per_million = price_per_million or {}
+
+        self._judge_evaluator = LlmJudgeEvaluator(
+            eval_config,
+            llm_client,
+            self._price_per_million,
+        )
         self._fixed_samples: Optional[List[Dict[str, Any]]] = None
         self._fixed_ground_truths: Optional[List[Dict[str, Any]]] = None
 
@@ -276,6 +289,12 @@ class RealPipelineEvaluator(BaseEvaluator):
     def set_executor_adapter(self, adapter: Any) -> None:
         """Set the executor adapter."""
         self._executor_adapter = adapter
+
+    def set_model_registry(self, registry: "ModelRegistry") -> None:
+        """Set the model registry for price lookup."""
+        self._model_registry = registry
+        self._price_per_million = registry.get_price_table()
+        self._judge_evaluator._price_per_million = self._price_per_million
 
     def prepare_fixed_samples(self, dataset_path: Optional[str] = None) -> None:
         """
@@ -431,6 +450,7 @@ def create_evaluator(
     price_per_million: Optional[Dict[str, float]] = None,
     executor_adapter: Optional[Any] = None,
     use_real_executor: bool = False,
+    model_registry: Optional["ModelRegistry"] = None,
 ) -> PipelineEvaluator:
     """
     Factory function to create an appropriate evaluator.
@@ -438,9 +458,10 @@ def create_evaluator(
     Args:
         eval_config: Evaluation configuration
         llm_client: LLM client for judge calls
-        price_per_million: Token prices
+        price_per_million: Token prices (deprecated, use model_registry)
         executor_adapter: DJ executor adapter
         use_real_executor: If True, use real executor; otherwise use stub
+        model_registry: ModelRegistry for price lookup
 
     Returns:
         A PipelineEvaluator instance
@@ -451,16 +472,16 @@ def create_evaluator(
             llm_client=llm_client,
             price_per_million=price_per_million,
             executor_adapter=executor_adapter,
+            model_registry=model_registry,
         )
 
-    if llm_client:
-        # Can do LLM-judge evaluation but no real executor
+    if llm_client or model_registry:
         return RealPipelineEvaluator(
             eval_config=eval_config,
             llm_client=llm_client,
             price_per_million=price_per_million,
-            executor_adapter=None,  # Will use stub for execution
+            executor_adapter=None,
+            model_registry=model_registry,
         )
 
-    # Fall back to pure stub
     return StubPipelineEvaluator(eval_config)

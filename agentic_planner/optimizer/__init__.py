@@ -10,6 +10,7 @@ This module provides:
 - Evaluation with LLM-as-a-judge
 - Cost tracking and quality scoring
 - Stable operator location via OpLocator
+- Model registry for multi-model support
 """
 
 from agentic_planner.optimizer.op_locator import (
@@ -56,3 +57,15 @@ def get_llm_action_selector():
     from agentic_planner.optimizer.llm_action_selector import LLMActionSelector
 
     return LLMActionSelector
+
+
+def get_model_registry():
+    """Lazy import for model registry."""
+    from agentic_planner.optimizer.model_registry import (
+        ModelRegistry,
+        ModelConfig,
+        JudgeConfig,
+        ModelsConfig,
+    )
+
+    return ModelRegistry, ModelConfig, JudgeConfig, ModelsConfig
