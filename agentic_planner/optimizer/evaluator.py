@@ -149,27 +149,32 @@ Provide your evaluation as JSON."""
         )
 
         try:
-            response = self._llm_client.generate(
-                system_prompt=self.JUDGE_SYSTEM_PROMPT,
-                user_prompt=user_prompt,
-                temperature=0.1,
-            )
+            if hasattr(self._llm_client, "complete_json"):
+                result = self._llm_client.complete_json(
+                    system=self.JUDGE_SYSTEM_PROMPT,
+                    user=user_prompt,
+                )
+            elif hasattr(self._llm_client, "generate"):
+                response = self._llm_client.generate(
+                    system_prompt=self.JUDGE_SYSTEM_PROMPT,
+                    user_prompt=user_prompt,
+                    temperature=0.1,
+                )
+                text = response.strip()
+                if "```json" in text:
+                    text = text.split("```json")[1].split("```")[0]
+                elif "```" in text:
+                    text = text.split("```")[1].split("```")[0]
+                result = json.loads(text)
+            else:
+                raise ValueError("LLM client must have 'complete_json' or 'generate' method")
 
-            # Parse JSON from response
-            text = response.strip()
-            if "```json" in text:
-                text = text.split("```json")[1].split("```")[0]
-            elif "```" in text:
-                text = text.split("```")[1].split("```")[0]
-
-            result = json.loads(text)
-            score = float(result.get("score", 5)) / 10.0  # Normalize to 0-1
+            score = float(result.get("score", 5)) / 10.0
             reasoning = result.get("reasoning", "")
 
             return score, reasoning
 
         except Exception as e:
-            # Return neutral score on error
             return 0.5, f"Evaluation error: {e}"
 
     def evaluate_batch(

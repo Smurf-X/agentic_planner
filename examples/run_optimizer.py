@@ -8,7 +8,14 @@ This script demonstrates how to run the pipeline optimizer with:
 - BeamSearch strategy
 
 Usage:
-    python examples/run_optimizer.py --api-key YOUR_API_KEY --base-url YOUR_BASE_URL
+    # Stub mode (no API calls, for testing)
+    python examples/run_optimizer.py --stub --sample-size 10
+
+    # Real mode with API
+    python examples/run_optimizer.py \
+        --judge-api-key YOUR_API_KEY \
+        --judge-base-url https://api.openai.com/v1 \
+        --judge-model gpt-4o-mini
 """
 
 import argparse
@@ -31,8 +38,17 @@ from agentic_planner.optimizer.directives import (
 )
 
 
-def create_pipeline_config(dataset_path: str, output_path: str) -> DJExecutableConfig:
-    """Create initial pipeline configuration with 4 operators."""
+def create_pipeline_config(
+    dataset_path: str, output_path: str, llm_model: str = "gpt-4o-mini"
+) -> DJExecutableConfig:
+    """
+    Create initial pipeline configuration with 4 operators.
+
+    Args:
+        dataset_path: Path to input dataset
+        output_path: Path for output
+        llm_model: Model to use for LLM operators in pipeline
+    """
     return {
         "dataset_path": dataset_path,
         "export_path": output_path,
@@ -50,24 +66,14 @@ def create_pipeline_config(dataset_path: str, output_path: str) -> DJExecutableC
                 }
             },
             {
-                "llm_filter": {
-                    "api_model": "gpt-4o-mini",
-                    "prompt": """Evaluate if this text is high-quality, informative content.
-Return JSON: {"keep": true/false}
-
-Text: {{text}}""",
-                    "output_key": "quality_check",
+                "llm_quality_score_filter": {
+                    "api_model": llm_model,
+                    "min_score": 0.5,
                 }
             },
             {
-                "llm_map": {
-                    "api_model": "gpt-4o-mini",
-                    "prompt": """Improve this text to be more clear and informative. Keep it concise.
-
-Original: {{text}}
-
-Return only the improved text.""",
-                    "output_key": "improved_text",
+                "extract_keyword_mapper": {
+                    "api_model": llm_model,
                 }
             },
         ],
@@ -76,9 +82,20 @@ Return only the improved text.""",
 
 def main():
     parser = argparse.ArgumentParser(description="Run pipeline optimizer")
-    parser.add_argument("--api-key", default="", help="LLM API key (required for real evaluation)")
-    parser.add_argument("--base-url", default="https://api.openai.com/v1", help="LLM API base URL")
-    parser.add_argument("--model", default="gpt-4o-mini", help="Model name for LLM")
+
+    # Judge LLM configuration (for LLM-as-Judge evaluation)
+    parser.add_argument("--judge-api-key", default="", help="LLM API key for Judge")
+    parser.add_argument(
+        "--judge-base-url", default="https://api.openai.com/v1", help="LLM API base URL for Judge"
+    )
+    parser.add_argument("--judge-model", default="gpt-4o-mini", help="Model for LLM-as-Judge")
+
+    # Pipeline LLM configuration (for operators inside pipeline)
+    parser.add_argument(
+        "--pipeline-llm-model", default="gpt-4o-mini", help="Model for Pipeline LLM operators"
+    )
+
+    # Search configuration
     parser.add_argument(
         "--sample-size", type=int, default=10, help="Number of samples for evaluation"
     )
@@ -100,34 +117,40 @@ def main():
     print("=" * 60)
 
     print("\n[1/5] Creating initial pipeline config...")
-    initial_config = create_pipeline_config(dataset_path, output_path)
+    initial_config = create_pipeline_config(
+        dataset_path, output_path, llm_model=args.pipeline_llm_model
+    )
     print(f"  - Dataset: {dataset_path}")
     print(f"  - Output: {output_path}")
     print(f"  - Operators: {len(initial_config['process'])}")
+    print(f"  - Pipeline LLM model: {args.pipeline_llm_model}")
 
     print("\n[2/5] Setting up evaluator...")
-
     eval_config = EvalConfig(
         sample_size=args.sample_size,
         random_seed=42,
         task_description="Clean and improve English text data",
     )
 
-    if args.stub or not args.api_key:
+    if args.stub or not args.judge_api_key:
         print("  - Using STUB evaluator (no real API calls)")
+        print("  - Judge model: N/A (stub mode)")
         evaluator = StubPipelineEvaluator(eval_config)
     else:
-        print(f"  - Model: {args.model}")
-        print(f"  - Base URL: {args.base_url}")
-        llm_client = OpenAICompatibleJsonClient(
-            model=args.model,
-            api_key=args.api_key,
-            base_url=args.base_url,
+        print(f"  - Judge model: {args.judge_model}")
+        print(f"  - Judge base URL: {args.judge_base_url}")
+
+        judge_client = OpenAICompatibleJsonClient(
+            model=args.judge_model,
+            api_key=args.judge_api_key,
+            base_url=args.judge_base_url,
         )
+
         executor_adapter = StubExecutorAdapter(dataset_path=dataset_path)
+
         evaluator = RealPipelineEvaluator(
             eval_config=eval_config,
-            llm_client=llm_client,
+            llm_client=judge_client,
             executor_adapter=executor_adapter,
         )
     print(f"  - Sample size: {args.sample_size}")
