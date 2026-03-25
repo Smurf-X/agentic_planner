@@ -241,9 +241,12 @@ def main():
         directives=[
             TightenFiltersDirective(intensity=0.1),
             LoosenFiltersDirective(intensity=0.1),
-        ]
+        ],
+        model_registry=registry if not args.stub else None,
     )
     print(f"  - Directives: tighten_filters, loosen_filters")
+    if not args.stub and registry:
+        print(f"  - Model swap: {len(registry.get_candidate_models())} candidate models")
 
     # Configure BeamSearch
     print("\n[5/6] Configuring BeamSearch strategy...")

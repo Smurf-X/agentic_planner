@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 if TYPE_CHECKING:
     from agentic_planner.contracts.recipe import DJExecutableConfig
     from agentic_planner.optimizer.directives.base import Directive, DirectiveResult
+    from agentic_planner.optimizer.model_registry import ModelRegistry
     from agentic_planner.optimizer.op_locator import OpIdentity
 
 
@@ -225,18 +226,21 @@ class ActionSpaceBuilder:
     This class analyzes a pipeline and generates all valid (operator, directive)
     combinations based on directive applicability rules.
 
-    Example:
-        builder = ActionSpaceBuilder(directives=[TightenFiltersDirective(), ...])
-        action_space = builder.build(pipeline_config)
+    With ModelRegistry, it also generates model-swap actions for LLM operators.
 
-        # Use LLM to select top actions
-        selected = llm_selector.select(action_space, top_k=10)
+    Example:
+        builder = ActionSpaceBuilder(
+            directives=[TightenFiltersDirective(), ...],
+            model_registry=registry,  # For model-swap actions
+        )
+        action_space = builder.build(pipeline_config)
     """
 
     def __init__(
         self,
         directives: Optional[List[Directive]] = None,
         directive_names: Optional[List[str]] = None,
+        model_registry: Optional["ModelRegistry"] = None,
     ):
         """
         Initialize the builder.
@@ -244,8 +248,10 @@ class ActionSpaceBuilder:
         Args:
             directives: List of directive instances to use
             directive_names: Names of directives to load from registry
+            model_registry: ModelRegistry for generating model-swap actions
         """
         self._directives: List[Directive] = []
+        self._model_registry = model_registry
 
         if directives:
             self._directives.extend(directives)
@@ -256,6 +262,11 @@ class ActionSpaceBuilder:
             for name in directive_names:
                 if name in DIRECTIVE_REGISTRY:
                     self._directives.append(DIRECTIVE_REGISTRY[name])
+
+    def set_model_registry(self, registry: "ModelRegistry") -> ActionSpaceBuilder:
+        """Set the model registry for model-swap actions."""
+        self._model_registry = registry
+        return self
 
     def add_directive(self, directive: Directive) -> ActionSpaceBuilder:
         """Add a directive to the builder."""
@@ -295,6 +306,10 @@ class ActionSpaceBuilder:
                     )
                     actions.append(action)
 
+            if self._model_registry:
+                model_swap_actions = self._build_model_swap_actions(op_idx, identity, config)
+                actions.extend(model_swap_actions)
+
         config_hash = ActionSpace.hash_config(config)
 
         return ActionSpace(
@@ -302,6 +317,86 @@ class ActionSpaceBuilder:
             config_hash=config_hash,
             operator_count=len(index.identities),
         )
+
+    def _build_model_swap_actions(
+        self,
+        op_idx: int,
+        identity: "OpIdentity",
+        config: DJExecutableConfig,
+    ) -> List[Action]:
+        """
+        Build model-swap actions for an LLM operator.
+
+        Args:
+            op_idx: Operator index
+            identity: Operator identity
+            config: Pipeline configuration
+
+        Returns:
+            List of model-swap actions
+        """
+        from agentic_planner.optimizer.directives.change_model import SwapSingleOpModelDirective
+        from agentic_planner.optimizer.op_locator import OpLocator
+
+        if not self._is_llm_operator(identity):
+            return []
+
+        current_model = self._get_current_model(identity.params)
+        if not current_model:
+            return []
+
+        candidate_models = self._model_registry.get_candidate_models()
+        if not candidate_models:
+            return []
+
+        actions: List[Action] = []
+        for to_model in candidate_models:
+            if to_model == current_model:
+                continue
+
+            directive = SwapSingleOpModelDirective(
+                locator=OpLocator(op_type=identity.op_type, occurrence=op_idx),
+                from_model=current_model,
+                to_model=to_model,
+            )
+
+            action = Action(
+                operator_index=op_idx,
+                operator_name=identity.op_type,
+                directive=directive,
+                operator_identity=identity,
+            )
+            actions.append(action)
+
+        return actions
+
+    def _is_llm_operator(self, identity: "OpIdentity") -> bool:
+        """Check if an operator is an LLM-based operator."""
+        llm_indicators = [
+            "llm_",
+            "llm_analysis",
+            "llm_filter",
+            "llm_map",
+            "extract_keyword",
+            "extract_entity",
+            "extract_event",
+            "calibrate_",
+            "dialog_",
+            "human_preference",
+            "optimize_qa",
+            "optimize_prompt",
+            "generate_qa",
+        ]
+        op_type = identity.op_type.lower()
+        return any(indicator in op_type for indicator in llm_indicators)
+
+    def _get_current_model(self, params: Dict[str, Any]) -> Optional[str]:
+        """Get the current model from operator params."""
+        model_keys = ["api_model", "model"]
+        for key in model_keys:
+            if key in params:
+                return params[key]
+        return None
 
     def _is_applicable(
         self,
