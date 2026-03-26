@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from agentic_planner.contracts.cost import CostBreakdown
 from agentic_planner.contracts.recipe import DJExecutableConfig
+from agentic_planner.optimizer.search.pareto import ParetoFrontier
 
 
 class SearchStrategyType(str, Enum):
@@ -189,34 +190,20 @@ class BaseSearchStrategy(ABC):
             )
 
     def _compute_pareto_front(self, candidates: List[SearchResult]) -> List[SearchResult]:
-        """
-        Compute Pareto frontier for quality vs cost.
-
-        A candidate dominates another if it has:
-        - Higher quality AND lower or equal cost, OR
-        - Equal quality AND lower cost
-        """
+        """Compute Pareto frontier for quality vs total_cost."""
         if not candidates:
             return []
 
-        # Sort by quality descending, then by cost ascending
-        sorted_candidates = sorted(
-            candidates,
-            key=lambda c: (-c.quality, c.cost.llm_token_cost + c.cost.wall_time_sec),
-        )
+        frontier = ParetoFrontier()
+        for idx, candidate in enumerate(candidates):
+            frontier.add(
+                quality=candidate.quality,
+                total_cost=candidate.cost.llm_token_cost + candidate.cost.wall_time_sec,
+                candidate_id=str(idx),
+                payload=candidate,
+            )
 
-        pareto: List[SearchResult] = []
-        min_cost = float("inf")
-
-        for candidate in sorted_candidates:
-            total_cost = candidate.cost.llm_token_cost + candidate.cost.wall_time_sec
-            # This candidate is on Pareto front if no previous candidate
-            # has both higher quality AND lower cost
-            if total_cost < min_cost:
-                pareto.append(candidate)
-                min_cost = total_cost
-
-        return pareto
+        return [member.payload for member in frontier.members if member.payload is not None]
 
     def _find_best_by_quality(self, candidates: List[SearchResult]) -> Optional[SearchResult]:
         """Find candidate with highest quality."""
