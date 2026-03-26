@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from agentic_planner.optimizer.action import ActionSpaceBuilder
+from agentic_planner.optimizer.directive_inference import DirectiveInferenceEngine
 from agentic_planner.optimizer.directives.instances import InstantiatedDirective
 from agentic_planner.optimizer.directives.registry import (
     get_directive_spec,
@@ -93,6 +94,8 @@ def test_action_space_builder_applies_spec_metadata_rules():
     assert space.operator_count == 3
     assert len(space.actions) == 3
     assert all(action.directive_name == "tighten_filters" for action in space.actions)
+    assert all(action.directive_template == "tighten_threshold" for action in space.actions)
+    assert all(action.instantiate_params["intensity"] == 0.1 for action in space.actions)
 
 
 def test_instantiated_directive_fails_closed_for_missing_target_locator():
@@ -107,3 +110,19 @@ def test_instantiated_directive_fails_closed_for_missing_target_locator():
     assert result.ok is False
     assert result.applied is False
     assert "no longer exists" in result.message
+
+
+def test_directive_inference_heuristics_emit_template_target_plan() -> None:
+    cfg = _sample_config()
+    index = ProcessIndex.build(cfg["process"])
+
+    engine = DirectiveInferenceEngine(llm_client=None)
+    recommendations = engine.analyze(cfg)
+
+    assert recommendations.recommendations
+    first = recommendations.recommendations[0]
+    assert first.directive_template
+    if first.target_locator is not None:
+        assert first.target_locator.operator_id in {
+            identity.operator_id for identity in index.identities
+        }

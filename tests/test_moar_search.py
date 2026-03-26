@@ -8,7 +8,9 @@ from copy import deepcopy
 import pytest
 
 from agentic_planner.contracts.cost import CostBreakdown
+from agentic_planner.optimizer.action import ActionSpaceBuilder
 from agentic_planner.optimizer.directives.base import DirectiveResult
+from agentic_planner.optimizer.llm_action_selector import LLMActionSelector
 from agentic_planner.optimizer.optimization_config import OptimizationConfig
 from agentic_planner.optimizer.runner import OptimizationRunMode, OptimizationRunner
 from agentic_planner.optimizer.search import create_search_strategy
@@ -247,3 +249,67 @@ def test_moar_search_early_stops_when_frontier_stalls(monkeypatch) -> None:
     assert report.metrics["early_stopped"] is True
     assert report.metrics["stop_reason"] == "frontier_improvement_stalled"
     assert report.total_iterations < 12
+
+
+def test_llm_selector_fallback_returns_structured_plans() -> None:
+    """Fallback selection should include template and target planning metadata."""
+    cfg = {
+        "process": [
+            {"text_length_filter": {"min_len": 10}},
+            {"language_id_score_filter": {"min_score": 0.5}},
+        ]
+    }
+    action_space = ActionSpaceBuilder(directive_names=["tighten_threshold"]).build(cfg)
+    selector = LLMActionSelector(llm_client=None)
+
+    result = selector.select(action_space, context={}, top_k=1)
+
+    assert len(result.selected_actions) == 1
+    assert len(result.planned_selections) == 1
+    plan = result.planned_selections[0]
+    assert plan.directive_template == "tighten_threshold"
+    assert plan.target_locator.operator_id == result.selected_actions[0].target_locator.operator_id
+
+
+def test_llm_selector_parses_structured_template_target_output() -> None:
+    """Selector should parse structured JSON with template + target locator fields."""
+    cfg = {
+        "process": [
+            {"text_length_filter": {"min_len": 10}},
+            {"language_id_score_filter": {"min_score": 0.5}},
+        ]
+    }
+    action_space = ActionSpaceBuilder(directive_names=["tighten_threshold"]).build(cfg)
+    first = action_space.actions[0]
+
+    class FakeLLM:
+        def generate(self, system_prompt, user_prompt, temperature):
+            _ = system_prompt
+            _ = user_prompt
+            _ = temperature
+            return f"""Selection draft:\n```json
+{{
+  \"selected\": [
+    {{
+      \"directive_template\": \"tighten_threshold\",
+      \"target_locator\": {{
+        \"operator_id\": \"{first.target_locator.operator_id}\",
+        \"audit_identity_hash\": \"{first.target_locator.audit_identity_hash}\"
+      }},
+      \"instantiate_params\": {{\"intensity\": 0.3}},
+      \"score\": 0.9,
+      \"reason\": \"tighten the earliest filter\"
+    }}
+  ],
+  \"reasoning\": \"prioritize selective filtering first\"
+}}
+```\nThanks."""
+
+    selector = LLMActionSelector(llm_client=FakeLLM())
+    result = selector.select(action_space, context={}, top_k=1)
+
+    assert len(result.selected_actions) == 1
+    assert result.selected_actions[0].target_locator == first.target_locator
+    assert len(result.planned_selections) == 1
+    assert result.planned_selections[0].instantiate_params["intensity"] == 0.3
+    assert result.reasoning == "prioritize selective filtering first"

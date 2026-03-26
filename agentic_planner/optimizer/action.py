@@ -36,6 +36,56 @@ def _directive_signature(directive: "Directive") -> str:
     return hashlib.md5(content.encode("utf-8")).hexdigest()[:12]
 
 
+_DIRECTIVE_TEMPLATE_ALIASES: Dict[str, str] = {
+    "tighten_filters": "tighten_threshold",
+    "loosen_filters": "loosen_threshold",
+    "remove_redundant_ops": "remove_redundant_op",
+    "reorder_filters_first": "safe_reorder_local",
+}
+
+
+def resolve_directive_template_name(directive: "Directive", directive_name: Optional[str] = None) -> str:
+    """Resolve canonical directive template name for a directive instance."""
+    candidate = getattr(directive, "spec_name", None)
+    if isinstance(candidate, str) and candidate:
+        return candidate
+
+    effective_name = directive_name or directive.name
+    return _DIRECTIVE_TEMPLATE_ALIASES.get(effective_name, effective_name)
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert values to JSON-safe forms for planning payloads."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, tuple):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if hasattr(value, "to_dict") and callable(value.to_dict):
+        try:
+            return _json_safe(value.to_dict())
+        except Exception:
+            return str(value)
+    return str(value)
+
+
+def extract_directive_instantiate_params(directive: "Directive") -> Dict[str, Any]:
+    """Extract directive instance state as instantiate params."""
+    state = getattr(directive, "__dict__", {})
+    if not isinstance(state, dict):
+        return {}
+
+    params: Dict[str, Any] = {}
+    for key, value in state.items():
+        if key.startswith("_"):
+            continue
+        params[str(key)] = _json_safe(value)
+    return params
+
+
 @dataclass
 class Action:
     """
@@ -56,12 +106,21 @@ class Action:
     operator_name: str
     directive: Directive
     directive_name: str = ""
+    directive_template: str = ""
+    instantiate_params: Dict[str, Any] = field(default_factory=dict)
     directive_signature: str = ""
     operator_identity: Optional[OpIdentity] = None
 
     def __post_init__(self):
         if not self.directive_name:
             self.directive_name = self.directive.name
+        if not self.directive_template:
+            self.directive_template = resolve_directive_template_name(
+                self.directive,
+                self.directive_name,
+            )
+        if not self.instantiate_params:
+            self.instantiate_params = extract_directive_instantiate_params(self.directive)
         if not self.directive_signature:
             self.directive_signature = _directive_signature(self.directive)
 
@@ -122,6 +181,8 @@ class Action:
             "target_locator": self.target_locator.to_dict(),
             "operator_name": self.operator_name,
             "directive_name": self.directive_name,
+            "directive_template": self.directive_template,
+            "instantiate_params": self.instantiate_params,
             "directive_signature": self.directive_signature,
             "action_key": self.action_key,
         }
@@ -559,4 +620,6 @@ __all__ = [
     "Action",
     "ActionSpace",
     "ActionSpaceBuilder",
+    "extract_directive_instantiate_params",
+    "resolve_directive_template_name",
 ]
