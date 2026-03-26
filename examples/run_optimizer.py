@@ -174,11 +174,6 @@ def main():
         default="gpt-4o-mini",
         help="Initial model for Pipeline LLM operators",
     )
-    parser.add_argument(
-        "--selector-model",
-        default="",
-        help="Model for action selection (defaults to judge model)",
-    )
 
     # Search configuration
     parser.add_argument(
@@ -192,17 +187,6 @@ def main():
         type=int,
         default=2,
         help="Maximum iterations",
-    )
-    parser.add_argument(
-        "--llm-selection-top-k",
-        type=int,
-        default=10,
-        help="Number of actions for LLM to select",
-    )
-    parser.add_argument(
-        "--no-llm-selection",
-        action="store_true",
-        help="Disable LLM-guided action selection",
     )
     parser.add_argument(
         "--stub",
@@ -344,28 +328,9 @@ def main():
     print("\n[5/7] Configuring action space...")
     print("  - MOAR baseline: evaluate root configuration only")
 
-    # Setup optional selection context (not used in Task 1 MOAR baseline)
+    # LLM action selection is not used in the Task 1 MOAR baseline.
     print("\n[6/7] Setting up LLM Action Selector...")
-
-    use_llm_selection = not args.no_llm_selection
-
-    if use_llm_selection and not args.stub:
-        selector_model = args.selector_model
-        if not selector_model:
-            candidate_models = registry.get_candidate_models()
-            if candidate_models:
-                selector_model = candidate_models[0]
-            else:
-                selector_model = registry.list_models()[0] if registry.list_models() else None
-
-        if selector_model:
-            print(f"  - Enabled: True")
-            print(f"  - Selector model: {selector_model}")
-            print(f"  - Top-k: {args.llm_selection_top_k}")
-        else:
-            print(f"  - Enabled: False (no model available)")
-    else:
-        print(f"  - Enabled: False (fallback to first-k)")
+    print("  - Enabled: False")
 
     # Configure MOAR search
     print("\n[7/7] Configuring MOAR strategy...")

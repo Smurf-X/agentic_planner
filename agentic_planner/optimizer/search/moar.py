@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -21,7 +21,7 @@ from agentic_planner.optimizer.search.base import (
 class MOARSearchConfig(BaseModel):
     """Configuration for MOAR search."""
 
-    strategy: SearchStrategyType = Field(
+    strategy: Literal[SearchStrategyType.MCTS] = Field(
         default=SearchStrategyType.MCTS,
         description="MOAR strategy marker for this staged migration.",
     )

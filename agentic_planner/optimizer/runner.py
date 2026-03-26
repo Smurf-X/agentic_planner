@@ -85,6 +85,7 @@ class OptimizationRunner:
         mode: OptimizationRunMode = OptimizationRunMode.DIRECTIVE_ONLY,
         directive_config: Optional[Dict[str, Any]] = None,
         moar_config: Optional[Dict[str, Any]] = None,
+        search_config: Optional[Dict[str, Any]] = None,
         evaluator: Optional[PipelineEvaluator] = None,
         llm_client: Optional["BaseLLMClient"] = None,
         executor_adapter: Optional["ExecutorAdapter"] = None,
@@ -96,6 +97,7 @@ class OptimizationRunner:
             mode: Which optimization stages to run
             directive_config: Configuration for directive engine
             moar_config: Configuration for MOAR search
+            search_config: Legacy alias for moar_config
             evaluator: Evaluator for quality scoring
             llm_client: LLM client for inference and judging
             executor_adapter: Adapter for running pipelines
@@ -104,7 +106,8 @@ class OptimizationRunner:
         """
         self.mode = mode
         self._directive_cfg = directive_config or {}
-        self._moar_cfg = moar_config or {}
+        normalized_search_config = moar_config if moar_config is not None else search_config
+        self._moar_cfg = normalized_search_config or {}
         self._evaluator = evaluator or StubPipelineEvaluator()
         self._llm_client = llm_client
         self._executor_adapter = executor_adapter

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from agentic_planner.contracts.cost import CostBreakdown
 from agentic_planner.optimizer.optimization_config import OptimizationConfig
 from agentic_planner.optimizer.runner import OptimizationRunMode, OptimizationRunner
@@ -104,3 +106,36 @@ def test_runner_propagates_failed_search_report(monkeypatch) -> None:
 
     assert result.ok is False
     assert result.errors == ["search failed"]
+
+
+def test_moar_config_rejects_non_mcts_strategy() -> None:
+    """MOAR config should reject non-MCTS strategy values."""
+    with pytest.raises(ValueError):
+        MOARSearchConfig(strategy=SearchStrategyType.RANDOM)
+
+
+def test_runner_accepts_search_config_alias(monkeypatch) -> None:
+    """Runner should accept legacy search_config alias."""
+    captured = {"max_iterations": None}
+
+    class StubMOARSearchStrategy:
+        def __init__(self, config, evaluator=None):
+            _ = evaluator
+            captured["max_iterations"] = config.max_iterations
+
+        def search(self, root):
+            _ = root
+            return SearchReport(ok=True, candidates=[])
+
+    monkeypatch.setattr(
+        "agentic_planner.optimizer.runner.MOARSearchStrategy",
+        StubMOARSearchStrategy,
+    )
+
+    runner = OptimizationRunner(
+        mode=OptimizationRunMode.SEARCH_ONLY,
+        search_config={"max_iterations": 7},
+    )
+    runner.run({"process": []})
+
+    assert captured["max_iterations"] == 7
