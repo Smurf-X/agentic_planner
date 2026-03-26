@@ -28,7 +28,7 @@ _THRESHOLD_PARAMS: Dict[str, Dict[str, Tuple[str, float]]] = {
         "max_num": ("decrease", 500),
     },
     "perplexity_filter": {
-        "max_ppl": ("decrease", 50),
+        "max_ppl": ("decrease", 100),
     },
     "token_num_filter": {
         "min_num": ("increase", 10),
@@ -38,9 +38,11 @@ _THRESHOLD_PARAMS: Dict[str, Dict[str, Tuple[str, float]]] = {
         "min_ratio": ("increase", 0.05),
         "max_ratio": ("decrease", 0.05),
     },
-    "alnum_ratio_filter": {
-        "min_ratio": ("increase", 0.05),
-        "max_ratio": ("decrease", 0.05),
+    "language_id_score_filter": {
+        "min_score": ("increase", 0.05),
+    },
+    "llm_quality_score_filter": {
+        "min_score": ("increase", 0.1),
     },
 }
 
