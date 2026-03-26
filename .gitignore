@@ -61,3 +61,6 @@ examples/models_real.yaml
 # Test yaml files
 test_dj.yaml
 test_dj2.yaml
+
+# Local git worktrees
+.worktrees/
