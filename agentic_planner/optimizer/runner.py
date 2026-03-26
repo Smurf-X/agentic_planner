@@ -84,7 +84,7 @@ class OptimizationRunner:
         *,
         mode: OptimizationRunMode = OptimizationRunMode.DIRECTIVE_ONLY,
         directive_config: Optional[Dict[str, Any]] = None,
-        search_config: Optional[Dict[str, Any]] = None,
+        moar_config: Optional[Dict[str, Any]] = None,
         evaluator: Optional[PipelineEvaluator] = None,
         llm_client: Optional["BaseLLMClient"] = None,
         executor_adapter: Optional["ExecutorAdapter"] = None,
@@ -95,7 +95,7 @@ class OptimizationRunner:
         Args:
             mode: Which optimization stages to run
             directive_config: Configuration for directive engine
-            search_config: Configuration for MOAR search
+            moar_config: Configuration for MOAR search
             evaluator: Evaluator for quality scoring
             llm_client: LLM client for inference and judging
             executor_adapter: Adapter for running pipelines
@@ -104,7 +104,7 @@ class OptimizationRunner:
         """
         self.mode = mode
         self._directive_cfg = directive_config or {}
-        self._search_cfg = search_config or {}
+        self._moar_cfg = moar_config or {}
         self._evaluator = evaluator or StubPipelineEvaluator()
         self._llm_client = llm_client
         self._executor_adapter = executor_adapter
@@ -143,7 +143,7 @@ class OptimizationRunner:
         return cls(
             mode=OptimizationRunMode(config.run_mode),
             directive_config=config.directive.model_dump(),
-            search_config=config.search.model_dump() if config.search else None,
+            moar_config=config.search.model_dump() if config.search else None,
             evaluator=evaluator,
             llm_client=llm_client,
             executor_adapter=executor_adapter,
@@ -192,35 +192,32 @@ class OptimizationRunner:
             OptimizationRunMode.SEARCH_ONLY,
             OptimizationRunMode.DIRECTIVE_THEN_SEARCH,
         ):
-            if not self._search_cfg:
-                errors.append("Search mode requires search_config")
-            else:
-                strategy = MOARSearchStrategy(
-                    MOARSearchConfig.model_validate(self._search_cfg),
-                    evaluator=self._evaluator,
-                )
-                report = strategy.search(current)
-                if not report.ok:
-                    errors.extend(report.errors)
-                candidates = report.candidates
+            strategy = MOARSearchStrategy(
+                MOARSearchConfig.model_validate(self._moar_cfg),
+                evaluator=self._evaluator,
+            )
+            report = strategy.search(current)
+            if not report.ok:
+                errors.extend(report.errors)
+            candidates = report.candidates
 
-                # Find best candidate
-                best = max(candidates, key=lambda c: c.quality) if candidates else None
+            # Find best candidate
+            best = max(candidates, key=lambda c: c.quality) if candidates else None
 
-                # Save results if output_dir is set
-                if self._output_dir and best:
-                    self._save_results(best)
+            # Save results if output_dir is set
+            if self._output_dir and best:
+                self._save_results(best)
 
-                return OptimizationRunnerResult(
-                    mode=self.mode,
-                    ok=len(errors) == 0,
-                    directive=dir_run,
-                    candidates=candidates,
-                    best_config=best.config if best else current,
-                    best_quality=best.quality if best else 0.0,
-                    best_cost=best.cost if best else None,
-                    errors=errors,
-                )
+            return OptimizationRunnerResult(
+                mode=self.mode,
+                ok=len(errors) == 0,
+                directive=dir_run,
+                candidates=candidates,
+                best_config=best.config if best else current,
+                best_quality=best.quality if best else 0.0,
+                best_cost=best.cost if best else None,
+                errors=errors,
+            )
 
         # Directive-only result
         if self._output_dir and dir_run:
@@ -344,7 +341,7 @@ def optimize_with_search(
     runner = OptimizationRunner(
         mode=OptimizationRunMode.SEARCH_ONLY,
         evaluator=evaluator,
-        search_config={
+        moar_config={
             "max_iterations": max_iterations,
             "max_evaluations": max_evaluations,
         },

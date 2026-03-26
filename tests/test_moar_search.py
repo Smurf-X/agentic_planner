@@ -6,7 +6,7 @@ from __future__ import annotations
 from agentic_planner.contracts.cost import CostBreakdown
 from agentic_planner.optimizer.optimization_config import OptimizationConfig
 from agentic_planner.optimizer.runner import OptimizationRunMode, OptimizationRunner
-from agentic_planner.optimizer.search.base import SearchReport, SearchResult
+from agentic_planner.optimizer.search.base import SearchReport, SearchResult, SearchStrategyType
 from agentic_planner.optimizer.search.moar import MOARSearchConfig, MOARSearchStrategy
 
 
@@ -15,6 +15,7 @@ def test_default_search_mode_builds_moar_config() -> None:
     cfg = OptimizationConfig(run_mode="search_only")
 
     assert isinstance(cfg.search, MOARSearchConfig)
+    assert cfg.search.strategy == SearchStrategyType.MCTS
 
 
 def test_runner_uses_moar_search_strategy(monkeypatch) -> None:
@@ -49,7 +50,7 @@ def test_runner_uses_moar_search_strategy(monkeypatch) -> None:
 
     runner = OptimizationRunner(
         mode=OptimizationRunMode.SEARCH_ONLY,
-        search_config={"max_iterations": 1},
+        moar_config={},
     )
     result = runner.run({"process": []})
 

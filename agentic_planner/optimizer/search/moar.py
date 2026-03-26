@@ -19,6 +19,10 @@ from agentic_planner.optimizer.search.base import (
 class MOARSearchConfig(BaseModel):
     """Configuration for MOAR search."""
 
+    strategy: SearchStrategyType = Field(
+        default=SearchStrategyType.MCTS,
+        description="MOAR strategy marker for this staged migration.",
+    )
     max_iterations: int = Field(default=3, ge=1, le=200)
     max_evaluations: int = Field(default=100, ge=1, le=10000)
     exploration_weight: float = Field(default=1.4, ge=0.0)
@@ -37,7 +41,7 @@ class MOARSearchStrategy(BaseSearchStrategy):
     ) -> None:
         super().__init__(
             SearchConfig(
-                strategy=SearchStrategyType.MOAR,
+                strategy=config.strategy,
                 max_iterations=config.max_iterations,
                 max_evaluations=config.max_evaluations,
                 seed=config.seed,
