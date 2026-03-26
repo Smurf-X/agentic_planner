@@ -214,7 +214,7 @@ Consider:
 Output your selection as a JSON object with the following format:
 {
   "selected": [
-    {"operator_index": 0, "directive": "directive_name", "reason": "brief reason"},
+    {"operator_id": "op-123", "directive": "directive_name", "reason": "brief reason"},
     ...
   ],
   "reasoning": "Overall strategy explanation"
@@ -241,7 +241,7 @@ Your goal is to balance:
 Output your selection as a JSON object:
 {
   "selected": [
-    {"operator_index": 0, "directive": "directive_name", "reason": "brief reason"},
+    {"operator_id": "op-123", "directive": "directive_name", "reason": "brief reason"},
     ...
   ],
   "reasoning": "Overall strategy explanation"
@@ -259,7 +259,8 @@ Output your selection as a JSON object:
         actions_desc = []
         for i, action in enumerate(action_space):
             actions_desc.append(
-                f"  [{i}] Operator: {action.operator_name} (index {action.operator_index}), "
+                f"  [{i}] Operator: {action.operator_name} "
+                f"(id {action.target_locator.operator_id}), "
                 f"Directive: {action.directive_name}"
             )
 
@@ -320,7 +321,8 @@ Prioritize exploration of untested actions while balancing with exploitation of 
         actions_desc = []
         for i, action in enumerate(action_space):
             actions_desc.append(
-                f"  [{i}] Operator: {action.operator_name} (index {action.operator_index}), "
+                f"  [{i}] Operator: {action.operator_name} "
+                f"(id {action.target_locator.operator_id}), "
                 f"Directive: {action.directive_name}"
             )
 
@@ -356,7 +358,7 @@ Focus on actions that address specific weaknesses or opportunities."""
     ) -> str:
         """Build prompt for ranking actions."""
         actions_desc = [
-            f"[{i}] {a.operator_name}[{a.operator_index}] -> {a.directive_name}"
+            f"[{i}] {a.operator_name}[{a.target_locator.operator_id}] -> {a.directive_name}"
             for i, a in enumerate(actions)
         ]
 
@@ -389,11 +391,17 @@ Output a JSON object mapping action index to predicted effectiveness score (0.0-
         selected = []
         scores = {}
 
-        action_map = {(a.operator_index, a.directive_name): a for a in action_space}
+        action_map = {(a.target_locator.operator_id, a.directive_name): a for a in action_space}
+        ordered_actions = list(action_space)
 
         for item in data.get("selected", [])[:top_k]:
-            op_idx = item.get("operator_index")
+            op_idx = item.get("operator_id")
             directive = item.get("directive")
+
+            if op_idx is None and isinstance(item.get("operator_index"), int):
+                index_value = item.get("operator_index")
+                if 0 <= index_value < len(ordered_actions):
+                    op_idx = ordered_actions[index_value].target_locator.operator_id
 
             key = (op_idx, directive)
             if key in action_map:
@@ -430,7 +438,7 @@ Output a JSON object mapping action index to predicted effectiveness score (0.0-
 
     def _action_key(self, action: Action) -> str:
         """Generate a unique key for an action."""
-        return f"{action.operator_index}:{action.directive_name}"
+        return action.action_key
 
     def _fallback_select(
         self,

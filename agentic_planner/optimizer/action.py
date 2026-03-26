@@ -13,11 +13,23 @@ import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
+from agentic_planner.optimizer.op_locator import ProcessIndex, TargetLocator
+
 if TYPE_CHECKING:
     from agentic_planner.contracts.recipe import DJExecutableConfig
     from agentic_planner.optimizer.directives.base import Directive, DirectiveResult
     from agentic_planner.optimizer.model_registry import ModelRegistry
     from agentic_planner.optimizer.op_locator import OpIdentity
+
+
+def _directive_signature(directive: "Directive") -> str:
+    """Generate a stable directive instance signature."""
+    payload = {
+        "directive_class": directive.__class__.__name__,
+        "state": getattr(directive, "__dict__", {}),
+    }
+    content = json.dumps(payload, sort_keys=True, default=str, ensure_ascii=False)
+    return hashlib.md5(content.encode("utf-8")).hexdigest()[:12]
 
 
 @dataclass
@@ -29,22 +41,38 @@ class Action:
     in the pipeline. This is the atomic unit used by search strategies.
 
     Attributes:
-        operator_index: Index of the target operator in process list
+        target_locator: Canonical locator for the target operator
         operator_name: Name/type of the target operator
-        operator_identity: Identity of the operator (optional, for stable reference)
         directive: The directive to apply
         directive_name: Name of the directive
+        directive_signature: Stable signature of directive instance parameters
     """
 
-    operator_index: int
+    target_locator: TargetLocator
     operator_name: str
     directive: Directive
-    operator_identity: Optional[OpIdentity] = None
     directive_name: str = ""
+    directive_signature: str = ""
+    operator_identity: Optional[OpIdentity] = None
 
     def __post_init__(self):
         if not self.directive_name:
             self.directive_name = self.directive.name
+        if not self.directive_signature:
+            self.directive_signature = _directive_signature(self.directive)
+
+    @property
+    def action_key(self) -> str:
+        """Stable identity for deduplicating actions."""
+        return (
+            f"{self.target_locator.operator_id}:"
+            f"{self.target_locator.audit_identity_hash}:"
+            f"{self.directive_name}:{self.directive_signature}"
+        )
+
+    def resolve_target_index(self, index: ProcessIndex) -> Optional[int]:
+        """Resolve the target in the current process index."""
+        return index.locate_target(self.target_locator)
 
     def apply(self, config: DJExecutableConfig) -> DirectiveResult:
         """
@@ -56,29 +84,53 @@ class Action:
         Returns:
             DirectiveResult with outcome
         """
-        return self.directive.apply(config, target_op=self.operator_index)
+        index = ProcessIndex.build(config.get("process", []))
+        target_idx = self.resolve_target_index(index)
+        if target_idx is None:
+            from agentic_planner.optimizer.directives.base import DirectiveResult
+
+            return DirectiveResult(
+                ok=False,
+                applied=False,
+                directive_name=self.directive_name,
+                message=(
+                    "target operator no longer exists "
+                    f"(operator_id={self.target_locator.operator_id})"
+                ),
+                config_before=config,
+                config_after=config,
+                details={
+                    "invalid_target": True,
+                    "target_locator": self.target_locator.to_dict(),
+                    "action_key": self.action_key,
+                },
+            )
+
+        return self.directive.apply(config, target_op=target_idx)
 
     def __hash__(self) -> int:
-        return hash((self.operator_index, self.directive_name))
+        return hash(self.action_key)
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Action):
             return False
-        return (
-            self.operator_index == other.operator_index
-            and self.directive_name == other.directive_name
-        )
+        return self.action_key == other.action_key
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize action to dict for logging/debugging."""
         return {
-            "operator_index": self.operator_index,
+            "target_locator": self.target_locator.to_dict(),
             "operator_name": self.operator_name,
             "directive_name": self.directive_name,
+            "directive_signature": self.directive_signature,
+            "action_key": self.action_key,
         }
 
     def __repr__(self) -> str:
-        return f"Action({self.operator_name}[{self.operator_index}] -> {self.directive_name})"
+        return (
+            f"Action({self.operator_name}[{self.target_locator.operator_id}] "
+            f"-> {self.directive_name})"
+        )
 
 
 @dataclass
@@ -130,24 +182,24 @@ class ActionSpace:
         Exclude already-used actions.
 
         Args:
-            used_actions: Set of (operator_index, directive_name) tuples
+            used_actions: Set of action keys
 
         Returns:
             New ActionSpace without used actions
         """
-        return self.filter(lambda a: (a.operator_index, a.directive_name) not in used_actions)
+        return self.filter(lambda a: a.action_key not in used_actions)
 
-    def get_for_operator(self, operator_index: int) -> List[Action]:
+    def get_for_operator(self, operator_id: str) -> List[Action]:
         """
         Get all actions targeting a specific operator.
 
         Args:
-            operator_index: Index of the operator
+            operator_id: Stable id of the operator
 
         Returns:
             List of actions for that operator
         """
-        return [a for a in self.actions if a.operator_index == operator_index]
+        return [a for a in self.actions if a.target_locator.operator_id == operator_id]
 
     def get_for_directive(self, directive_name: str) -> List[Action]:
         """
@@ -179,18 +231,19 @@ class ActionSpace:
             return self.actions.copy()
         return gen.sample(self.actions, n)
 
-    def group_by_operator(self) -> Dict[int, List[Action]]:
+    def group_by_operator(self) -> Dict[str, List[Action]]:
         """
         Group actions by target operator.
 
         Returns:
-            Dict mapping operator_index to list of actions
+            Dict mapping operator_id to list of actions
         """
-        groups: Dict[int, List[Action]] = {}
+        groups: Dict[str, List[Action]] = {}
         for action in self.actions:
-            if action.operator_index not in groups:
-                groups[action.operator_index] = []
-            groups[action.operator_index].append(action)
+            operator_id = action.target_locator.operator_id
+            if operator_id not in groups:
+                groups[operator_id] = []
+            groups[operator_id].append(action)
         return groups
 
     def to_summary(self) -> Dict[str, Any]:
@@ -208,7 +261,7 @@ class ActionSpace:
         return {
             "total_actions": len(self.actions),
             "operator_count": self.operator_count,
-            "actions_per_operator": {str(k): len(v) for k, v in by_op.items()},
+            "actions_per_operator": {k: len(v) for k, v in by_op.items()},
             "actions_by_directive": by_directive,
         }
 
@@ -288,8 +341,6 @@ class ActionSpaceBuilder:
         Returns:
             ActionSpace with all valid actions
         """
-        from agentic_planner.optimizer.op_locator import ProcessIndex
-
         process = config.get("process", [])
         index = ProcessIndex.build(process)
 
@@ -299,7 +350,7 @@ class ActionSpaceBuilder:
             for directive in self._directives:
                 if self._is_applicable(directive, identity, index):
                     action = Action(
-                        operator_index=op_idx,
+                        target_locator=identity.to_target_locator(),
                         operator_name=identity.op_type,
                         directive=directive,
                         operator_identity=identity,
@@ -361,7 +412,7 @@ class ActionSpaceBuilder:
             )
 
             action = Action(
-                operator_index=op_idx,
+                target_locator=identity.to_target_locator(),
                 operator_name=identity.op_type,
                 directive=directive,
                 operator_identity=identity,
@@ -438,8 +489,6 @@ class ActionSpaceBuilder:
         Returns:
             List of actions applicable to that operator
         """
-        from agentic_planner.optimizer.op_locator import ProcessIndex
-
         process = config.get("process", [])
         index = ProcessIndex.build(process)
 
@@ -452,7 +501,7 @@ class ActionSpaceBuilder:
         for directive in self._directives:
             if self._is_applicable(directive, identity, index):
                 action = Action(
-                    operator_index=operator_index,
+                    target_locator=identity.to_target_locator(),
                     operator_name=identity.op_type,
                     directive=directive,
                     operator_identity=identity,
