@@ -11,19 +11,23 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
 
 from agentic_planner.optimizer.op_locator import ProcessIndex, TargetLocator
 
 if TYPE_CHECKING:
     from agentic_planner.contracts.recipe import DJExecutableConfig
     from agentic_planner.optimizer.directives.base import Directive, DirectiveResult
+    from agentic_planner.optimizer.directives.specs import DirectiveSpec
     from agentic_planner.optimizer.model_registry import ModelRegistry
     from agentic_planner.optimizer.op_locator import OpIdentity
 
 
 def _directive_signature(directive: "Directive") -> str:
     """Generate a stable directive instance signature."""
+    if hasattr(directive, "replay_signature"):
+        return directive.replay_signature()
+
     payload = {
         "directive_class": directive.__class__.__name__,
         "state": getattr(directive, "__dict__", {}),
@@ -64,11 +68,7 @@ class Action:
     @property
     def action_key(self) -> str:
         """Stable identity for deduplicating actions."""
-        return (
-            f"{self.target_locator.operator_id}:"
-            f"{self.target_locator.audit_identity_hash}:"
-            f"{self.directive_name}:{self.directive_signature}"
-        )
+        return f"{self.target_locator.canonical_key()}:{self.directive_name}:{self.directive_signature}"
 
     def resolve_target_index(self, index: ProcessIndex) -> Optional[int]:
         """Resolve the target in the current process index."""
@@ -294,6 +294,7 @@ class ActionSpaceBuilder:
         directives: Optional[List[Directive]] = None,
         directive_names: Optional[List[str]] = None,
         model_registry: Optional["ModelRegistry"] = None,
+        allowed_safety_levels: Optional[List[str]] = None,
     ):
         """
         Initialize the builder.
@@ -302,9 +303,11 @@ class ActionSpaceBuilder:
             directives: List of directive instances to use
             directive_names: Names of directives to load from registry
             model_registry: ModelRegistry for generating model-swap actions
+            allowed_safety_levels: Safety levels allowed in generated action space
         """
         self._directives: List[Directive] = []
         self._model_registry = model_registry
+        self._allowed_safety_levels: Set[str] = set(allowed_safety_levels or ["safe"])
 
         if directives:
             self._directives.extend(directives)
@@ -348,7 +351,7 @@ class ActionSpaceBuilder:
 
         for op_idx, identity in enumerate(index.identities):
             for directive in self._directives:
-                if self._is_applicable(directive, identity, index):
+                if self._is_candidate_allowed(directive, identity, index):
                     action = Action(
                         target_locator=identity.to_target_locator(),
                         operator_name=identity.op_type,
@@ -499,7 +502,7 @@ class ActionSpaceBuilder:
         actions: List[Action] = []
 
         for directive in self._directives:
-            if self._is_applicable(directive, identity, index):
+            if self._is_candidate_allowed(directive, identity, index):
                 action = Action(
                     target_locator=identity.to_target_locator(),
                     operator_name=identity.op_type,
@@ -509,6 +512,47 @@ class ActionSpaceBuilder:
                 actions.append(action)
 
         return actions
+
+    def _resolve_directive_spec(self, directive: Directive) -> Optional["DirectiveSpec"]:
+        """Resolve directive spec metadata for a directive instance."""
+        from agentic_planner.optimizer.directives.registry import get_directive_spec
+
+        spec = get_directive_spec(directive.name)
+        if spec is not None:
+            return spec
+
+        alias_map = {
+            "tighten_filters": "tighten_threshold",
+            "loosen_filters": "loosen_threshold",
+            "remove_redundant_ops": "remove_redundant_op",
+            "reorder_filters_first": "safe_reorder_local",
+        }
+        spec_name = alias_map.get(directive.name)
+        if spec_name is None:
+            return None
+        return get_directive_spec(spec_name)
+
+    def _is_candidate_allowed(
+        self,
+        directive: Directive,
+        identity: OpIdentity,
+        index: ProcessIndex,
+    ) -> bool:
+        """Check candidate eligibility using explicit spec safety/applicability metadata."""
+        spec = self._resolve_directive_spec(directive)
+        if spec is not None:
+            if not spec.is_search_safe(list(self._allowed_safety_levels)):
+                return False
+
+            applicability = spec.applicability
+            if not applicability.per_operator:
+                return False
+            if not applicability.target_locator_supported:
+                return False
+            if not applicability.allows_operator(identity.op_type):
+                return False
+
+        return self._is_applicable(directive, identity, index)
 
 
 __all__ = [

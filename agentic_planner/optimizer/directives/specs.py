@@ -29,6 +29,12 @@ class DirectiveApplicability:
     target_locator_supported: bool = True
     """Whether canonical target locator resolution is supported."""
 
+    def allows_operator(self, op_type: str) -> bool:
+        """Return whether this applicability allows the given operator type."""
+        if not self.applicable_op_types:
+            return True
+        return op_type in self.applicable_op_types
+
 
 @dataclass(frozen=True)
 class DirectiveSpec:
@@ -40,6 +46,11 @@ class DirectiveSpec:
     safety_level: str = "safe"
     safety_notes: str = ""
     applicability: DirectiveApplicability = field(default_factory=DirectiveApplicability)
+
+    def is_search_safe(self, allowed_levels: Optional[List[str]] = None) -> bool:
+        """Return whether this directive is safe for search action generation."""
+        levels = allowed_levels or ["safe"]
+        return self.safety_level in levels
 
     def instantiate(
         self,

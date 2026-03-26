@@ -64,6 +64,31 @@ class ExecutionConfig(BaseModel):
     num_workers: int = Field(default=4, ge=1, description="Number of parallel workers")
 
 
+class SearchExecutionBoundaryConfig(BaseModel):
+    """Runtime boundary settings enforced during search evaluations."""
+
+    disable_op_fusion: bool = Field(
+        default=True,
+        description="Disable DJ op_fusion so evaluated configs remain explicit.",
+    )
+    disable_checkpoint_optimization: bool = Field(
+        default=True,
+        description="Disable DJ checkpoint optimization during search evaluation.",
+    )
+    disable_partition_optimization: bool = Field(
+        default=True,
+        description="Disable DJ partition optimization during search evaluation.",
+    )
+
+    def to_runtime_overrides(self) -> Dict[str, bool]:
+        """Build DJ runtime overrides for search evaluations."""
+        return {
+            "op_fusion": not self.disable_op_fusion,
+            "checkpoint_optimization": not self.disable_checkpoint_optimization,
+            "partition_optimization": not self.disable_partition_optimization,
+        }
+
+
 class OptimizationConfig(BaseModel):
     """
     Full configuration for optimization runs.
@@ -101,6 +126,12 @@ class OptimizationConfig(BaseModel):
     execution: ExecutionConfig = Field(
         default_factory=ExecutionConfig,
         description="Pipeline execution configuration",
+    )
+
+    # Search runtime boundary
+    search_execution_boundary: SearchExecutionBoundaryConfig = Field(
+        default_factory=SearchExecutionBoundaryConfig,
+        description="Execution boundary settings enforced for search runs",
     )
 
     # LLM settings
@@ -278,6 +309,12 @@ execution:
   ground_truth_path: null
   work_dir: /tmp/dj_optimizer
   num_workers: 4
+
+# Search execution boundary (applies to search modes)
+search_execution_boundary:
+  disable_op_fusion: true
+  disable_checkpoint_optimization: true
+  disable_partition_optimization: true
 
 # LLM configuration
 llm:

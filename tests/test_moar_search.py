@@ -19,11 +19,17 @@ def test_default_search_mode_builds_moar_config() -> None:
 
     assert isinstance(cfg.search, MOARSearchConfig)
     assert cfg.search.strategy == SearchStrategyType.MCTS
+    assert cfg.search_execution_boundary.to_runtime_overrides() == {
+        "op_fusion": False,
+        "checkpoint_optimization": False,
+        "partition_optimization": False,
+    }
 
 
 def test_runner_uses_moar_search_strategy(monkeypatch) -> None:
     """Runner should instantiate MOAR strategy for search stages."""
     calls = {"constructed": 0, "searched": 0}
+    captured_root = {"value": None}
 
     class StubMOARSearchStrategy:
         def __init__(self, config, evaluator=None):
@@ -32,7 +38,7 @@ def test_runner_uses_moar_search_strategy(monkeypatch) -> None:
             calls["constructed"] += 1
 
         def search(self, root):
-            _ = root
+            captured_root["value"] = root
             calls["searched"] += 1
             return SearchReport(
                 ok=True,
@@ -60,6 +66,9 @@ def test_runner_uses_moar_search_strategy(monkeypatch) -> None:
     assert calls["constructed"] == 1
     assert calls["searched"] == 1
     assert result.best_quality == 0.8
+    assert captured_root["value"]["op_fusion"] is False
+    assert captured_root["value"]["checkpoint_optimization"] is False
+    assert captured_root["value"]["partition_optimization"] is False
 
 
 def test_moar_strategy_constructible_from_defaults() -> None:

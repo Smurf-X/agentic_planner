@@ -38,6 +38,10 @@ class TargetLocator:
             "audit_identity_hash": self.audit_identity_hash,
         }
 
+    def canonical_key(self) -> str:
+        """Return canonical locator key used in action identity."""
+        return f"{self.operator_id}:{self.audit_identity_hash}"
+
 
 @dataclass(frozen=True)
 class OpIdentity:
@@ -205,7 +209,14 @@ class ProcessIndex:
 
     def locate_target(self, target_locator: TargetLocator) -> Optional[int]:
         """Resolve canonical target locator to current index position."""
-        return self._id_to_index.get(target_locator.operator_id)
+        idx = self._id_to_index.get(target_locator.operator_id)
+        if idx is None:
+            return None
+
+        identity = self.identities[idx]
+        if identity.audit_identity_hash != target_locator.audit_identity_hash:
+            return None
+        return idx
 
     def get_by_index(self, index: int) -> Optional[OpIdentity]:
         """Get identity at a specific index."""

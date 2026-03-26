@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from agentic_planner.optimizer.action import ActionSpaceBuilder
 from agentic_planner.optimizer.directives.instances import InstantiatedDirective
 from agentic_planner.optimizer.directives.registry import (
     get_directive_spec,
@@ -40,6 +41,9 @@ def test_directive_specs_include_safety_and_applicability_metadata():
     assert spec.applicability is not None
     assert spec.applicability.per_operator is True
     assert "text_length_filter" in spec.applicability.applicable_op_types
+    assert spec.applicability.allows_operator("text_length_filter") is True
+    assert spec.applicability.allows_operator("generate_qa_from_text_mapper") is False
+    assert spec.is_search_safe() is True
 
 
 def test_instantiated_directive_signature_is_replayable_and_stable():
@@ -76,6 +80,19 @@ def test_instantiated_directive_target_locator_support():
     second_min = process[1]["text_length_filter"]["min_len"]
     assert first_min > 10
     assert second_min == 20
+
+
+def test_action_space_builder_applies_spec_metadata_rules():
+    cfg = _sample_config()
+    builder = ActionSpaceBuilder(
+        directive_names=["tighten_threshold", "safe_reorder_local"],
+    )
+
+    space = builder.build(cfg)
+
+    assert space.operator_count == 3
+    assert len(space.actions) == 3
+    assert all(action.directive_name == "tighten_filters" for action in space.actions)
 
 
 def test_instantiated_directive_fails_closed_for_missing_target_locator():

@@ -8,6 +8,7 @@ This module provides the high-level API for running pipeline optimization:
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -21,7 +22,10 @@ from agentic_planner.optimizer.directive_engine import (
     DirectiveEngineRun,
 )
 from agentic_planner.optimizer.evaluator import PipelineEvaluator, StubPipelineEvaluator
-from agentic_planner.optimizer.optimization_config import OptimizationConfig
+from agentic_planner.optimizer.optimization_config import (
+    OptimizationConfig,
+    SearchExecutionBoundaryConfig,
+)
 from agentic_planner.optimizer.search.moar import MOARSearchConfig, MOARSearchStrategy
 
 CandidateRecord = Any  # Type alias for dynamic candidate objects
@@ -86,6 +90,7 @@ class OptimizationRunner:
         directive_config: Optional[Dict[str, Any]] = None,
         moar_config: Optional[Dict[str, Any]] = None,
         search_config: Optional[Dict[str, Any]] = None,
+        search_execution_boundary_config: Optional[Dict[str, Any]] = None,
         evaluator: Optional[PipelineEvaluator] = None,
         llm_client: Optional["BaseLLMClient"] = None,
         executor_adapter: Optional["ExecutorAdapter"] = None,
@@ -98,6 +103,7 @@ class OptimizationRunner:
             directive_config: Configuration for directive engine
             moar_config: Configuration for MOAR search
             search_config: Legacy alias for moar_config
+            search_execution_boundary_config: Runtime boundary settings for search runs
             evaluator: Evaluator for quality scoring
             llm_client: LLM client for inference and judging
             executor_adapter: Adapter for running pipelines
@@ -108,6 +114,7 @@ class OptimizationRunner:
         self._directive_cfg = directive_config or {}
         normalized_search_config = moar_config if moar_config is not None else search_config
         self._moar_cfg = normalized_search_config or {}
+        self._search_execution_boundary_cfg = search_execution_boundary_config or {}
         self._evaluator = evaluator or StubPipelineEvaluator()
         self._llm_client = llm_client
         self._executor_adapter = executor_adapter
@@ -147,6 +154,7 @@ class OptimizationRunner:
             mode=OptimizationRunMode(config.run_mode),
             directive_config=config.directive.model_dump(),
             moar_config=config.search.model_dump() if config.search else None,
+            search_execution_boundary_config=config.search_execution_boundary.model_dump(),
             evaluator=evaluator,
             llm_client=llm_client,
             executor_adapter=executor_adapter,
@@ -195,6 +203,7 @@ class OptimizationRunner:
             OptimizationRunMode.SEARCH_ONLY,
             OptimizationRunMode.DIRECTIVE_THEN_SEARCH,
         ):
+            current = self._apply_search_execution_boundary(current)
             strategy = MOARSearchStrategy(
                 MOARSearchConfig.model_validate(self._moar_cfg),
                 evaluator=self._evaluator,
@@ -289,6 +298,16 @@ class OptimizationRunner:
 
         with path.open("w", encoding="utf-8") as f:
             json.dump(trace_data, f, ensure_ascii=False, indent=2)
+
+    def _apply_search_execution_boundary(self, cfg: DJExecutableConfig) -> DJExecutableConfig:
+        """Apply deterministic DJ runtime boundaries before search evaluation."""
+        boundary = SearchExecutionBoundaryConfig.model_validate(self._search_execution_boundary_cfg)
+        runtime_overrides = boundary.to_runtime_overrides()
+
+        bounded_cfg = deepcopy(cfg)
+        for key, value in runtime_overrides.items():
+            bounded_cfg[key] = value
+        return bounded_cfg
 
 
 # Convenience functions
