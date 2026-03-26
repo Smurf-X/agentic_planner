@@ -3,14 +3,18 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 import pytest
 
 from agentic_planner.contracts.cost import CostBreakdown
+from agentic_planner.optimizer.directives.base import DirectiveResult
 from agentic_planner.optimizer.optimization_config import OptimizationConfig
 from agentic_planner.optimizer.runner import OptimizationRunMode, OptimizationRunner
 from agentic_planner.optimizer.search import create_search_strategy
 from agentic_planner.optimizer.search.base import SearchReport, SearchResult, SearchStrategyType
 from agentic_planner.optimizer.search.moar import MOARSearchConfig, MOARSearchStrategy
+from agentic_planner.optimizer.search.tree_node import SearchTreeNode
 
 
 def test_default_search_mode_builds_moar_config() -> None:
@@ -148,3 +152,98 @@ def test_runner_accepts_search_config_alias(monkeypatch) -> None:
     runner.run({"process": []})
 
     assert captured["max_iterations"] == 7
+
+
+class _FakeAction:
+    def __init__(self, action_key: str, marker: str = "") -> None:
+        self._action_key = action_key
+        self._marker = marker
+
+    @property
+    def action_key(self) -> str:
+        return self._action_key
+
+    def apply(self, config):
+        after = deepcopy(config)
+        if self._marker:
+            after[self._marker] = True
+        return DirectiveResult(
+            ok=True,
+            applied=True,
+            directive_name="fake",
+            config_before=config,
+            config_after=after,
+        )
+
+
+class _MarkerEvaluator:
+    def evaluate(self, config):
+        if config.get("dominated"):
+            return CostBreakdown(llm_token_cost=1.0, wall_time_sec=1.0), 0.1
+        return CostBreakdown(llm_token_cost=0.0, wall_time_sec=0.0), 0.5
+
+
+def test_tree_node_action_memory_uses_canonical_action_keys() -> None:
+    """Used-action memory should dedupe by action_key, not object identity."""
+    node = SearchTreeNode.from_config({"process": []})
+    action_a1 = _FakeAction("same:key")
+    action_a2 = _FakeAction("same:key")
+    action_b = _FakeAction("other:key")
+
+    node.mark_action_used(action_a1.action_key)
+
+    assert node.is_action_used(action_a1.action_key) is True
+    assert node.is_action_used(action_a2.action_key) is True
+    assert node.is_action_used(action_b.action_key) is False
+
+
+def test_moar_search_generates_actions_per_node_dynamically(monkeypatch) -> None:
+    """Action generation should run for selected child nodes, not only root."""
+    strategy = MOARSearchStrategy(MOARSearchConfig(max_iterations=3, seed=3))
+    visited_depths = []
+
+    def fake_generate(node):
+        visited_depths.append(node.depth)
+        if node.depth == 0:
+            return [_FakeAction("root:action")]
+        if node.depth == 1:
+            return [_FakeAction("child:action")]
+        return []
+
+    monkeypatch.setattr(strategy, "_generate_actions_for_node", fake_generate)
+
+    report = strategy.search({"process": []})
+
+    assert report.ok is True
+    assert len(report.candidates) >= 3
+    assert 0 in visited_depths
+    assert 1 in visited_depths
+
+
+def test_moar_search_early_stops_when_frontier_stalls(monkeypatch) -> None:
+    """Search should stop once frontier reward stays below threshold for patience window."""
+    strategy = MOARSearchStrategy(
+        MOARSearchConfig(
+            max_iterations=12,
+            early_stop_patience=2,
+            frontier_improvement_threshold=1.0,
+            seed=11,
+        ),
+        evaluator=_MarkerEvaluator(),
+    )
+
+    def fake_generate(node):
+        if node.depth >= 1:
+            return []
+        return [
+            _FakeAction("dominated:action:1", marker="dominated"),
+            _FakeAction("dominated:action:2", marker="dominated"),
+        ]
+
+    monkeypatch.setattr(strategy, "_generate_actions_for_node", fake_generate)
+
+    report = strategy.search({"process": []})
+
+    assert report.metrics["early_stopped"] is True
+    assert report.metrics["stop_reason"] == "frontier_improvement_stalled"
+    assert report.total_iterations < 12

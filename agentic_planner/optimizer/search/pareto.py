@@ -17,6 +17,15 @@ class ParetoPoint:
     payload: Optional[Any] = None
 
 
+@dataclass(frozen=True)
+class FrontierUpdate:
+    """Detailed frontier update outcome used by search reward loops."""
+
+    reward: float
+    joined_frontier: bool
+    dominated_count: int
+
+
 def frontier_membership_reward(joined_frontier: bool) -> float:
     """Reward primitive for joining the frontier."""
     if not joined_frontier:
@@ -61,6 +70,23 @@ class ParetoFrontier:
         Reward is zero for dominated candidates. For non-dominated additions,
         reward is membership reward plus dominance bonus for removed members.
         """
+        update = self.add_with_details(
+            quality=quality,
+            total_cost=total_cost,
+            candidate_id=candidate_id,
+            payload=payload,
+        )
+        return update.reward
+
+    def add_with_details(
+        self,
+        *,
+        quality: float,
+        total_cost: float,
+        candidate_id: Optional[str] = None,
+        payload: Optional[Any] = None,
+    ) -> FrontierUpdate:
+        """Add a candidate and return full frontier update details."""
         point = ParetoPoint(
             quality=quality,
             total_cost=total_cost,
@@ -69,7 +95,7 @@ class ParetoFrontier:
         )
 
         if self._is_dominated(point):
-            return 0.0
+            return FrontierUpdate(reward=0.0, joined_frontier=False, dominated_count=0)
 
         dominated_members = [member for member in self._members if self._dominates(point, member)]
         if dominated_members:
@@ -77,7 +103,11 @@ class ParetoFrontier:
 
         self._members.append(point)
         self._members.sort(key=lambda member: (-member.quality, member.total_cost))
-        return frontier_contribution_reward(
+        return FrontierUpdate(
+            reward=frontier_contribution_reward(
+                joined_frontier=True,
+                dominated_count=len(dominated_members),
+            ),
             joined_frontier=True,
             dominated_count=len(dominated_members),
         )
@@ -104,6 +134,7 @@ class ParetoFrontier:
 
 __all__ = [
     "ParetoPoint",
+    "FrontierUpdate",
     "ParetoFrontier",
     "frontier_membership_reward",
     "frontier_dominance_bonus",

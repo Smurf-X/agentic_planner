@@ -37,6 +37,11 @@ class SearchTreeNode:
     parent_id: Optional[str] = None
     node_id: str = ""
     depth: int = 0
+    visit_count: int = 0
+    total_reward: float = 0.0
+    children: Dict[str, "SearchTreeNode"] = field(default_factory=dict)
+    used_action_keys: List[str] = field(default_factory=list)
+    incoming_action_key: Optional[str] = None
 
     @classmethod
     def from_config(
@@ -65,6 +70,21 @@ class SearchTreeNode:
             node_id=node_id,
             depth=depth,
         )
+
+    def mark_action_used(self, action_key: str) -> None:
+        """Record a canonical action key used from this node."""
+        if action_key not in self.used_action_keys:
+            self.used_action_keys.append(action_key)
+
+    def is_action_used(self, action_key: str) -> bool:
+        """Whether an action key has been used from this node."""
+        return action_key in self.used_action_keys
+
+    def mean_reward(self) -> float:
+        """Average reward for UCB-style selection."""
+        if self.visit_count == 0:
+            return 0.0
+        return self.total_reward / float(self.visit_count)
 
 
 __all__ = ["SearchNodeOperator", "SearchTreeNode"]
