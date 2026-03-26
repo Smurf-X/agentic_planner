@@ -179,6 +179,7 @@ class TightenFiltersDirective(Directive):
     """
 
     name = "tighten_filters"
+    spec_name = "tighten_threshold"
     applicable_op_types = list(_THRESHOLD_PARAMS.keys())
 
     def __init__(self, intensity: float = 0.1) -> None:
@@ -221,62 +222,6 @@ class TightenFiltersDirective(Directive):
                 continue
 
             if target_op is not None and i != target_op:
-                new_proc.append(step)
-                continue
-
-            new_params = dict(params)
-            changed = False
-            for param_name, (direction, base_delta) in op_info.items():
-                if param_name in new_params:
-                    old_val = new_params[param_name]
-                    if isinstance(old_val, (int, float)):
-                        delta = base_delta * self.intensity
-                        if direction == "increase":
-                            new_params[param_name] = old_val + delta
-                        else:
-                            new_params[param_name] = max(0, old_val - delta)
-                        adjustments.append(
-                            {
-                                "identity_hash": index.identities[i].identity_hash
-                                if i < len(index.identities)
-                                else None,
-                                "param": param_name,
-                                "old": old_val,
-                                "new": new_params[param_name],
-                            }
-                        )
-                        changed = True
-
-            if changed:
-                new_proc.append({op_name: new_params})
-                applied = True
-            else:
-                new_proc.append(step)
-
-        after["process"] = new_proc
-
-        return DirectiveResult(
-            ok=True,
-            applied=applied,
-            directive_name=self.name,
-            message=f"tightened {len(adjustments)} threshold(s)"
-            if applied
-            else "no adjustable thresholds",
-            config_before=before,
-            config_after=after,
-            details={"adjustments": adjustments, "intensity": self.intensity},
-        )
-
-        after = self._clone(before)
-        applied = False
-        adjustments: List[Dict[str, Any]] = []
-
-        new_proc = []
-        for i, step in enumerate(after.get("process", [])):
-            op_name, params = self._get_op_params(step)
-
-            op_info = _THRESHOLD_PARAMS.get(op_name)
-            if not op_info:
                 new_proc.append(step)
                 continue
 
@@ -332,6 +277,7 @@ class LoosenFiltersDirective(Directive):
     """
 
     name = "loosen_filters"
+    spec_name = "loosen_threshold"
     applicable_op_types = list(_THRESHOLD_PARAMS.keys())
 
     def __init__(self, intensity: float = 0.1) -> None:
@@ -374,63 +320,6 @@ class LoosenFiltersDirective(Directive):
                 continue
 
             if target_op is not None and i != target_op:
-                new_proc.append(step)
-                continue
-
-            new_params = dict(params)
-            changed = False
-            for param_name, (direction, base_delta) in op_info.items():
-                if param_name in new_params:
-                    old_val = new_params[param_name]
-                    if isinstance(old_val, (int, float)):
-                        delta = base_delta * self.intensity
-                        # Reverse direction to loosen
-                        if direction == "increase":
-                            new_params[param_name] = max(0, old_val - delta)
-                        else:
-                            new_params[param_name] = old_val + delta
-                        adjustments.append(
-                            {
-                                "identity_hash": index.identities[i].identity_hash
-                                if i < len(index.identities)
-                                else None,
-                                "param": param_name,
-                                "old": old_val,
-                                "new": new_params[param_name],
-                            }
-                        )
-                        changed = True
-
-            if changed:
-                new_proc.append({op_name: new_params})
-                applied = True
-            else:
-                new_proc.append(step)
-
-        after["process"] = new_proc
-
-        return DirectiveResult(
-            ok=True,
-            applied=applied,
-            directive_name=self.name,
-            message=f"loosened {len(adjustments)} threshold(s)"
-            if applied
-            else "no adjustable thresholds",
-            config_before=before,
-            config_after=after,
-            details={"adjustments": adjustments, "intensity": self.intensity},
-        )
-
-        after = self._clone(before)
-        applied = False
-        adjustments: List[Dict[str, Any]] = []
-
-        new_proc = []
-        for i, step in enumerate(after.get("process", [])):
-            op_name, params = self._get_op_params(step)
-
-            op_info = _THRESHOLD_PARAMS.get(op_name)
-            if not op_info:
                 new_proc.append(step)
                 continue
 

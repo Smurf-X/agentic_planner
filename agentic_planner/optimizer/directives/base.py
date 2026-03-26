@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import hashlib
+import json
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
@@ -68,6 +70,7 @@ class Directive(ABC):
 
     name: str = "base"
     applicable_op_types: Optional[List[str]] = None
+    supports_target_locator: bool = True
 
     def apply(
         self,
@@ -133,6 +136,16 @@ class Directive(ABC):
     def _clone(self, cfg: DJExecutableConfig) -> DJExecutableConfig:
         """Create a deep copy of the config."""
         return deepcopy(cfg)
+
+    def replay_signature(self) -> str:
+        """Stable instance signature for replay and deduplication."""
+        payload = {
+            "directive_class": self.__class__.__name__,
+            "directive_name": self.name,
+            "state": getattr(self, "__dict__", {}),
+        }
+        content = json.dumps(payload, sort_keys=True, default=str, ensure_ascii=False)
+        return hashlib.md5(content.encode("utf-8")).hexdigest()[:12]
 
     def _get_step(self, cfg: DJExecutableConfig, idx: int) -> Optional[Dict[str, Any]]:
         """Get a step from the process list by index."""
