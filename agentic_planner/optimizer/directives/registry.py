@@ -12,8 +12,11 @@ from agentic_planner.optimizer.directives.adjust_threshold import (
     LoosenFiltersDirective,
     TightenFiltersDirective,
 )
+from agentic_planner.optimizer.directives.change_model import SwapSingleOpModelDirective
+from agentic_planner.optimizer.directives.few_shot import AddFewShotExamplesDirective
 from agentic_planner.optimizer.directives.remove_redundant import RemoveRedundantOpDirective
 from agentic_planner.optimizer.directives.reorder import ReorderFiltersFirstDirective
+from agentic_planner.optimizer.directives.rewrite_prompt import RewritePromptDirective
 from agentic_planner.optimizer.directives.specs import DirectiveApplicability, DirectiveSpec
 
 # Core registry with singleton instances
@@ -30,6 +33,9 @@ _CORE_DIRECTIVE_NAMES = {
     "tighten_filters",
     "loosen_filters",
     "bump_text_length_min_len",
+    "swap_model",
+    "rewrite_prompt",
+    "add_few_shot_examples",
 }
 
 
@@ -103,6 +109,62 @@ def _register_default_specs() -> None:
                 global_allowed=True,
                 applicable_op_types=[],
                 target_locator_supported=False,
+            ),
+        )
+    )
+    _register_spec(
+        DirectiveSpec(
+            name="swap_model",
+            directive_factory=SwapSingleOpModelDirective,
+            default_params={"to_model": "gpt-4o"},
+            safety_level="safe",
+            safety_notes=(
+                "Swaps only model parameters and keeps compatibility checks via ModelRegistry."
+            ),
+            applicability=DirectiveApplicability(
+                per_operator=True,
+                global_allowed=False,
+                applicable_op_types=[],
+                target_locator_supported=True,
+            ),
+        )
+    )
+    _register_spec(
+        DirectiveSpec(
+            name="rewrite_prompt",
+            directive_factory=RewritePromptDirective,
+            default_params={
+                "new_prompt": "Improve instruction clarity while preserving task intent.",
+            },
+            safety_level="safe",
+            safety_notes="Rewrites only prompt text and emits prompt-diff trace metadata.",
+            applicability=DirectiveApplicability(
+                per_operator=True,
+                global_allowed=False,
+                applicable_op_types=list(RewritePromptDirective.applicable_op_types),
+                target_locator_supported=True,
+            ),
+        )
+    )
+    _register_spec(
+        DirectiveSpec(
+            name="add_few_shot_examples",
+            directive_factory=AddFewShotExamplesDirective,
+            default_params={
+                "examples": [
+                    {
+                        "input": "Input example",
+                        "output": "Output example",
+                    }
+                ]
+            },
+            safety_level="safe",
+            safety_notes="Appends few-shot examples to prompt without touching operator order.",
+            applicability=DirectiveApplicability(
+                per_operator=True,
+                global_allowed=False,
+                applicable_op_types=list(AddFewShotExamplesDirective.applicable_op_types),
+                target_locator_supported=True,
             ),
         )
     )

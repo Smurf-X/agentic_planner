@@ -25,6 +25,21 @@ def _sample_config():
     }
 
 
+def _sample_llm_config():
+    return {
+        "dataset_path": "data.jsonl",
+        "export_path": "output.jsonl",
+        "process": [
+            {
+                "llm_filter": {
+                    "prompt": "Keep only high quality records.",
+                    "api_model": "gpt-4o-mini",
+                }
+            }
+        ],
+    }
+
+
 def test_first_wave_directive_specs_registered():
     names = list_directive_spec_names()
 
@@ -32,6 +47,14 @@ def test_first_wave_directive_specs_registered():
     assert "loosen_threshold" in names
     assert "remove_redundant_op" in names
     assert "safe_reorder_local" in names
+
+
+def test_second_wave_directive_specs_registered():
+    names = list_directive_spec_names()
+
+    assert "swap_model" in names
+    assert "rewrite_prompt" in names
+    assert "add_few_shot_examples" in names
 
 
 def test_directive_specs_include_safety_and_applicability_metadata():
@@ -126,3 +149,78 @@ def test_directive_inference_heuristics_emit_template_target_plan() -> None:
         assert first.target_locator.operator_id in {
             identity.operator_id for identity in index.identities
         }
+
+
+def test_swap_model_spec_applies_and_emits_model_trace_fields() -> None:
+    cfg = _sample_llm_config()
+    index = ProcessIndex.build(cfg["process"])
+    locator = index.identities[0].to_target_locator()
+
+    spec = get_directive_spec("swap_model")
+    assert spec is not None
+
+    inst = spec.instantiate(
+        params={
+            "from_model": "gpt-4o-mini",
+            "to_model": "gpt-4o",
+        },
+        target_locator=locator,
+    )
+    result = inst.apply(cfg)
+
+    assert result.ok is True
+    assert result.applied is True
+    assert result.details["action_type"] == "model_swap"
+    assert result.details["from_model"] == "gpt-4o-mini"
+    assert result.details["to_model"] == "gpt-4o"
+    assert result.details["model_param_key"] == "api_model"
+
+
+def test_rewrite_prompt_spec_emits_prompt_trace_fields() -> None:
+    cfg = _sample_llm_config()
+    index = ProcessIndex.build(cfg["process"])
+    locator = index.identities[0].to_target_locator()
+
+    spec = get_directive_spec("rewrite_prompt")
+    assert spec is not None
+
+    inst = spec.instantiate(
+        params={
+            "new_prompt": "Keep concise and informative records only.",
+        },
+        target_locator=locator,
+    )
+    result = inst.apply(cfg)
+
+    assert result.ok is True
+    assert result.applied is True
+    assert result.details["action_type"] == "prompt_rewrite"
+    assert result.details["prompt_before_chars"] > 0
+    assert result.details["prompt_after_chars"] > 0
+    assert result.details["prompt_key"] == "prompt"
+
+
+def test_add_few_shot_examples_spec_emits_examples_trace_fields() -> None:
+    cfg = _sample_llm_config()
+    index = ProcessIndex.build(cfg["process"])
+    locator = index.identities[0].to_target_locator()
+
+    spec = get_directive_spec("add_few_shot_examples")
+    assert spec is not None
+
+    inst = spec.instantiate(
+        params={
+            "examples": [
+                {"input": "short lorem", "output": "drop"},
+                {"input": "well formed answer", "output": "keep"},
+            ],
+        },
+        target_locator=locator,
+    )
+    result = inst.apply(cfg)
+
+    assert result.ok is True
+    assert result.applied is True
+    assert result.details["action_type"] == "few_shot_examples"
+    assert result.details["examples_added"] == 2
+    assert result.details["prompt_key"] == "prompt"

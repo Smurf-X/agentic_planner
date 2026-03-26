@@ -6,7 +6,7 @@ from __future__ import annotations
 from copy import deepcopy
 import math
 import random
-from typing import Any, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -14,6 +14,8 @@ from agentic_planner.contracts.recipe import DJExecutableConfig
 from agentic_planner.optimizer.action import ActionSpaceBuilder
 from agentic_planner.optimizer.directives.base import DirectiveResult
 from agentic_planner.optimizer.directives.registry import list_directive_spec_names
+from agentic_planner.optimizer.model_registry import ModelRegistry
+from agentic_planner.optimizer.op_locator import ProcessIndex
 from agentic_planner.optimizer.search.base import (
     BaseSearchStrategy,
     SearchConfig,
@@ -52,6 +54,7 @@ class MOARSearchStrategy(BaseSearchStrategy):
         self,
         config: MOARSearchConfig,
         evaluator: Optional[Any] = None,
+        model_registry: Optional[ModelRegistry] = None,
     ) -> None:
         super().__init__(
             SearchConfig(
@@ -63,9 +66,11 @@ class MOARSearchStrategy(BaseSearchStrategy):
             evaluator,
         )
         self._moar_config = config
+        self._model_registry = model_registry or ModelRegistry.default()
         directive_names = config.directive_names or list_directive_spec_names()
         self._action_builder = ActionSpaceBuilder(
             directive_names=directive_names,
+            model_registry=self._model_registry,
             allowed_safety_levels=config.allowed_safety_levels,
         )
         self._rng = random.Random(config.seed)
@@ -96,6 +101,7 @@ class MOARSearchStrategy(BaseSearchStrategy):
         )
         candidates.append(root_result)
         self._backpropagate([root_node], root_frontier.reward)
+        self._seed_root_model_baselines(root_node, frontier, candidates)
 
         no_improvement_streak = 0
         early_stopped = False
@@ -188,14 +194,139 @@ class MOARSearchStrategy(BaseSearchStrategy):
     def _evaluate_node(self, node: SearchTreeNode, origin: str, generation: int) -> SearchResult:
         """Evaluate a node and package a SearchResult."""
         cost, quality = self._evaluate_config(node.config)
+        incoming_step = getattr(node, "incoming_directive_result", None)
+        trace: List[Any] = []
+        if incoming_step is not None:
+            trace.append(incoming_step)
         return SearchResult(
             config=deepcopy(node.config),
             cost=cost,
             quality=quality,
             origin=origin,
+            trace=trace,
             generation=generation,
             parent_id=node.parent_id,
         )
+
+    def _seed_root_model_baselines(
+        self,
+        root_node: SearchTreeNode,
+        frontier: ParetoFrontier,
+        candidates: List[SearchResult],
+    ) -> None:
+        """Seed frontier with root-level model-swap baseline candidates."""
+        if self._evaluated_count >= self._moar_config.max_evaluations:
+            return
+
+        baseline_seeds = self._build_root_model_baselines(root_node)
+        for baseline_node in baseline_seeds:
+            if self._evaluated_count >= self._moar_config.max_evaluations:
+                break
+
+            origin = baseline_node.incoming_action_key or "baseline:model_swap"
+            result = self._evaluate_node(baseline_node, origin=origin, generation=0)
+            candidates.append(result)
+            frontier_update = frontier.add_with_details(
+                quality=result.quality,
+                total_cost=self._total_cost(result),
+                candidate_id=baseline_node.node_id,
+                payload=result,
+            )
+            self._backpropagate([root_node, baseline_node], frontier_update.reward)
+
+    def _build_root_model_baselines(self, root_node: SearchTreeNode) -> List[SearchTreeNode]:
+        """Create root-level baseline nodes by swapping all LLM models at once."""
+        process = root_node.config.get("process", [])
+        if not isinstance(process, list) or not process:
+            return []
+
+        current_models: List[str] = []
+        for identity in root_node.operators:
+            model_value = self._extract_model_value(identity.params)
+            if model_value:
+                current_models.append(model_value)
+
+        if not current_models:
+            return []
+
+        dominant_model = current_models[0]
+        candidate_models = self._model_registry.get_swap_candidates(dominant_model)
+        baseline_nodes: List[SearchTreeNode] = []
+
+        for to_model in candidate_models:
+            updated_config, replaced = self._swap_models_in_config(root_node.config, to_model)
+            if replaced == 0:
+                continue
+
+            before_model = dominant_model
+            action_key = f"baseline:swap_model:{to_model}"
+            baseline_node = SearchTreeNode.from_config(
+                updated_config,
+                parent_id=root_node.node_id,
+                node_id=self._next_node_id(),
+                depth=0,
+            )
+            baseline_node.incoming_action_key = action_key
+            baseline_node.incoming_directive_result = DirectiveResult(
+                ok=True,
+                applied=True,
+                directive_name="swap_model",
+                message=f"root baseline {before_model} -> {to_model}",
+                config_before=deepcopy(root_node.config),
+                config_after=deepcopy(updated_config),
+                details={
+                    "action_type": "model_swap",
+                    "action_scope": "root_baseline",
+                    "from_model": before_model,
+                    "to_model": to_model,
+                    "replaced_operators": replaced,
+                },
+            )
+            baseline_nodes.append(baseline_node)
+
+        return baseline_nodes
+
+    def _extract_model_value(self, params: Dict[str, Any]) -> str:
+        """Extract model value from operator params."""
+        for key in ("api_model", "model"):
+            value = params.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return ""
+
+    def _swap_models_in_config(self, config: DJExecutableConfig, to_model: str) -> Tuple[DJExecutableConfig, int]:
+        """Swap compatible LLM operator models in a config copy."""
+        updated = deepcopy(config)
+        process = updated.get("process", [])
+        if not isinstance(process, list):
+            return updated, 0
+
+        replaced = 0
+        index = ProcessIndex.build(process)
+        for idx, identity in enumerate(index.identities):
+            current_model = self._extract_model_value(identity.params)
+            if not current_model:
+                continue
+            if not self._model_registry.is_swap_compatible(current_model, to_model):
+                continue
+
+            step = process[idx]
+            if not isinstance(step, dict) or len(step) != 1:
+                continue
+            op_name = next(iter(step.keys()))
+            params = step.get(op_name, {})
+            if not isinstance(params, dict):
+                continue
+
+            key = "api_model" if isinstance(params.get("api_model"), str) else "model"
+            if not isinstance(params.get(key), str):
+                continue
+
+            params[key] = to_model
+            process[idx] = {op_name: params}
+            replaced += 1
+
+        return updated, replaced
 
     def _total_cost(self, result: SearchResult) -> float:
         """Combine cost dimensions into a scalar for Pareto utilities."""

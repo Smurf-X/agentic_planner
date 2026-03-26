@@ -11,6 +11,7 @@ from agentic_planner.contracts.cost import CostBreakdown
 from agentic_planner.optimizer.action import ActionSpaceBuilder
 from agentic_planner.optimizer.directives.base import DirectiveResult
 from agentic_planner.optimizer.llm_action_selector import LLMActionSelector
+from agentic_planner.optimizer.model_registry import ModelRegistry
 from agentic_planner.optimizer.optimization_config import OptimizationConfig
 from agentic_planner.optimizer.runner import OptimizationRunMode, OptimizationRunner
 from agentic_planner.optimizer.search import create_search_strategy
@@ -249,6 +250,52 @@ def test_moar_search_early_stops_when_frontier_stalls(monkeypatch) -> None:
     assert report.metrics["early_stopped"] is True
     assert report.metrics["stop_reason"] == "frontier_improvement_stalled"
     assert report.total_iterations < 12
+
+
+def test_moar_search_seeds_root_model_baseline_candidates() -> None:
+    """Search should evaluate root-level model baselines for frontier seeding."""
+    cfg = {
+        "process": [
+            {
+                "llm_filter": {
+                    "prompt": "Filter noisy records",
+                    "api_model": "gpt-4o-mini",
+                }
+            }
+        ]
+    }
+    model_registry = ModelRegistry.from_dict(
+        {
+            "pipeline_models": {
+                "gpt-4o-mini": {
+                    "model": "gpt-4o-mini",
+                    "base_url": "https://api.openai.com/v1",
+                    "supports_json_mode": True,
+                },
+                "gpt-4o": {
+                    "model": "gpt-4o",
+                    "base_url": "https://api.openai.com/v1",
+                    "supports_json_mode": True,
+                },
+            },
+            "candidate_models": ["gpt-4o-mini", "gpt-4o"],
+        }
+    )
+    strategy = MOARSearchStrategy(
+        MOARSearchConfig(max_iterations=1),
+        model_registry=model_registry,
+    )
+
+    report = strategy.search(cfg)
+
+    baselines = [c for c in report.candidates if c.origin.startswith("baseline:swap_model:")]
+    assert len(baselines) == 1
+    assert baselines[0].config["process"][0]["llm_filter"]["api_model"] == "gpt-4o"
+    assert baselines[0].trace
+    step = baselines[0].trace[0]
+    assert step.directive_name == "swap_model"
+    assert step.details["action_type"] == "model_swap"
+    assert step.details["to_model"] == "gpt-4o"
 
 
 def test_llm_selector_fallback_returns_structured_plans() -> None:

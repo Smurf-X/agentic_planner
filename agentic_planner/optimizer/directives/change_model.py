@@ -9,10 +9,11 @@ complies with the Action-based design (one operator, one directive).
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Tuple
 
 from agentic_planner.contracts.recipe import DJExecutableConfig
 from agentic_planner.optimizer.directives.base import Directive, DirectiveResult
+from agentic_planner.optimizer.model_registry import ModelRegistry
 from agentic_planner.optimizer.op_locator import OpLocator, ProcessIndex
 
 
@@ -31,7 +32,7 @@ class SwapSingleOpModelDirective(Directive):
         )
     """
 
-    name = "swap_single_op_model"
+    name = "swap_model"
     applicable_op_types = None
 
     def __init__(
@@ -40,6 +41,7 @@ class SwapSingleOpModelDirective(Directive):
         from_model: str = "",
         to_model: str = "",
         model_keys: tuple[str, ...] = ("api_model", "model"),
+        model_registry: Optional[ModelRegistry] = None,
     ) -> None:
         """
         Args:
@@ -52,6 +54,15 @@ class SwapSingleOpModelDirective(Directive):
         self.from_model = from_model
         self.to_model = to_model
         self.model_keys = model_keys
+        self.model_registry = model_registry or ModelRegistry.default()
+
+    def _resolve_model_key_and_value(self, params: dict) -> Tuple[Optional[str], str]:
+        """Resolve the active model parameter key and current value."""
+        for key in self.model_keys:
+            value = params.get(key)
+            if isinstance(value, str) and value:
+                return key, value
+        return None, ""
 
     def apply_with_index(
         self,
@@ -88,11 +99,48 @@ class SwapSingleOpModelDirective(Directive):
                 config_after=after,
             )
 
-        changed = False
-        for key in self.model_keys:
-            if key in params and params[key] == self.from_model:
-                params[key] = self.to_model
-                changed = True
+        model_key, current_model = self._resolve_model_key_and_value(params)
+        if model_key is None:
+            return DirectiveResult(
+                ok=True,
+                applied=False,
+                directive_name=self.name,
+                message="operator has no model parameter",
+                config_before=before,
+                config_after=after,
+            )
+
+        if self.from_model and current_model != self.from_model:
+            return DirectiveResult(
+                ok=True,
+                applied=False,
+                directive_name=self.name,
+                message=f"current model {current_model} does not match {self.from_model}",
+                config_before=before,
+                config_after=after,
+            )
+
+        if not self.to_model:
+            return DirectiveResult(
+                ok=True,
+                applied=False,
+                directive_name=self.name,
+                message="target model is required",
+                config_before=before,
+                config_after=after,
+            )
+
+        if not self.model_registry.is_swap_compatible(current_model, self.to_model):
+            return DirectiveResult(
+                ok=True,
+                applied=False,
+                directive_name=self.name,
+                message=f"model swap blocked by compatibility checks: {current_model} -> {self.to_model}",
+                config_before=before,
+                config_after=after,
+            )
+
+        params[model_key] = self.to_model
 
         after["process"][target_idx] = {op_name: params}
 
@@ -100,14 +148,19 @@ class SwapSingleOpModelDirective(Directive):
 
         return DirectiveResult(
             ok=True,
-            applied=changed,
+            applied=True,
             directive_name=self.name,
-            message=f"{self.from_model} -> {self.to_model}" if changed else "no matching model",
+            message=f"{current_model} -> {self.to_model}",
             config_before=before,
             config_after=after,
             details={
+                "action_type": "model_swap",
                 "identity_hash": identity.identity_hash if identity else None,
+                "operator_id": identity.operator_id if identity else None,
                 "op_type": op_name,
+                "from_model": current_model,
+                "to_model": self.to_model,
+                "model_param_key": model_key,
             },
         )
 

@@ -148,8 +148,14 @@ class ModelRegistry:
                     "base_url": os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
                     "price_per_million": 0.15,
                 },
+                "gpt-4o": {
+                    "model": "gpt-4o",
+                    "api_key": os.environ.get("OPENAI_API_KEY", ""),
+                    "base_url": os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+                    "price_per_million": 2.5,
+                },
             },
-            "candidate_models": ["gpt-4o-mini"],
+            "candidate_models": ["gpt-4o-mini", "gpt-4o"],
         }
         return cls.from_dict(default_config)
 
@@ -180,8 +186,45 @@ class ModelRegistry:
     def get_candidate_models(self) -> List[str]:
         """Get list of candidate models for optimization."""
         if self._config.candidate_models:
-            return self._config.candidate_models
+            return [name for name in self._config.candidate_models if name in self._model_configs]
         return list(self._model_configs.keys())
+
+    def has_model(self, name: str) -> bool:
+        """Return whether the registry contains a model."""
+        return name in self._model_configs
+
+    def is_swap_compatible(self, from_model: str, to_model: str) -> bool:
+        """Check whether swapping between two models is considered safe."""
+        if not to_model:
+            return False
+        if from_model == to_model:
+            return False
+
+        if not self.has_model(to_model):
+            return False
+
+        to_cfg = self.get_model_or_raise(to_model)
+        if not to_cfg.supports_json_mode:
+            return False
+
+        if not from_model:
+            return True
+        if not self.has_model(from_model):
+            return False
+
+        from_cfg = self.get_model_or_raise(from_model)
+        if from_cfg.base_url != to_cfg.base_url:
+            return False
+
+        return True
+
+    def get_swap_candidates(self, from_model: str) -> List[str]:
+        """Return candidate models that are swap-compatible with the current model."""
+        return [
+            candidate
+            for candidate in self.get_candidate_models()
+            if self.is_swap_compatible(from_model=from_model, to_model=candidate)
+        ]
 
     def get_judge_config(self) -> JudgeConfig:
         """Get judge configuration."""
