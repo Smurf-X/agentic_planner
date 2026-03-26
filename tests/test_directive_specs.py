@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import importlib
+
 from agentic_planner.optimizer.action import ActionSpaceBuilder
 from agentic_planner.optimizer.directive_inference import DirectiveInferenceEngine
 from agentic_planner.optimizer.directives.instances import InstantiatedDirective
@@ -55,6 +57,15 @@ def test_second_wave_directive_specs_registered():
     assert "swap_model" in names
     assert "rewrite_prompt" in names
     assert "add_few_shot_examples" in names
+
+
+def test_gleaning_directive_module_removed() -> None:
+    try:
+        importlib.import_module("agentic_planner.optimizer.directives.gleaning")
+    except ModuleNotFoundError:
+        assert True
+    else:
+        assert False, "gleaning directive module should not be importable"
 
 
 def test_directive_specs_include_safety_and_applicability_metadata():
