@@ -288,7 +288,7 @@ class MOARSearchStrategy(BaseSearchStrategy):
 
     def _extract_model_value(self, params: Dict[str, Any]) -> str:
         """Extract model value from operator params."""
-        for key in ("api_model", "model"):
+        for key in ("api_model", "api_or_hf_model", "model"):
             value = params.get(key)
             if isinstance(value, str) and value:
                 return value
@@ -318,7 +318,12 @@ class MOARSearchStrategy(BaseSearchStrategy):
             if not isinstance(params, dict):
                 continue
 
-            key = "api_model" if isinstance(params.get("api_model"), str) else "model"
+            if isinstance(params.get("api_model"), str):
+                key = "api_model"
+            elif isinstance(params.get("api_or_hf_model"), str):
+                key = "api_or_hf_model"
+            else:
+                key = "model"
             if not isinstance(params.get(key), str):
                 continue
 

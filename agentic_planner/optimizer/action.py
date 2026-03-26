@@ -507,7 +507,7 @@ class ActionSpaceBuilder:
 
     def _get_current_model(self, params: Dict[str, Any]) -> Optional[str]:
         """Get the current model from operator params."""
-        model_keys = ["api_model", "model"]
+        model_keys = ["api_model", "api_or_hf_model", "model"]
         for key in model_keys:
             if key in params:
                 return params[key]
