@@ -1,0 +1,61 @@
+# Model Configuration for Pipeline Optimizer
+# 
+# This file configures all LLM models used during optimization:
+# - judge: LLM-as-Judge for quality evaluation
+# - pipeline_models: Models available for pipeline operators
+# - candidate_models: Models to try during optimization
+#
+# Usage:
+#   python examples/run_optimizer.py --models-config examples/models.yaml
+
+# Judge configuration (for LLM-as-Judge evaluation)
+judge:
+  model: "gpt-4o-mini"
+  api_key: "${OPENAI_API_KEY}"  # Supports environment variable expansion
+  base_url: "https://api.openai.com/v1"
+  price_per_million: 0.15  # $0.15 per million tokens
+  temperature: 0.1
+
+# Pipeline models: all models available for operators
+pipeline_models:
+  # OpenAI models
+  gpt-4o-mini:
+    model: "gpt-4o-mini"
+    api_key: "${OPENAI_API_KEY}"
+    base_url: "https://api.openai.com/v1"
+    price_per_million: 0.15
+    
+  gpt-4o:
+    model: "gpt-4o"
+    api_key: "${OPENAI_API_KEY}"
+    base_url: "https://api.openai.com/v1"
+    price_per_million: 5.0
+  
+  # Anthropic models (example)
+  claude-3-haiku:
+    model: "claude-3-haiku-20240307"
+    api_key: "${ANTHROPIC_API_KEY}"
+    base_url: "https://api.anthropic.com/v1"
+    price_per_million: 0.25
+  
+  # DeepSeek models (example)
+  deepseek-chat:
+    model: "deepseek-chat"
+    api_key: "${DEEPSEEK_API_KEY}"
+    base_url: "https://api.deepseek.com/v1"
+    price_per_million: 0.1
+  
+  # Qwen models (example)
+  qwen-turbo:
+    model: "qwen-turbo"
+    api_key: "${DASHSCOPE_API_KEY}"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    price_per_million: 0.02
+
+# Candidate models: models to try during optimization
+# Only these models will be considered when swapping models
+candidate_models:
+  - gpt-4o-mini
+  - gpt-4o
+  # - claude-3-haiku
+  # - deepseek-chat

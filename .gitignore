@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+venv/
+ENV/
+.venv/
+
+# Data-Juicer work directories
+.dj_work/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Output files
+output/pareto_*.yaml
+output/optimized*.jsonl
+
+# Sensitive files - contains real API keys
+examples/models_real.yaml
+
+# Environment variables
+.env
+.env.local
+
+# Temp files
+*.tmp
+*.log
+
+# Test yaml files
+test_dj.yaml
+test_dj2.yaml

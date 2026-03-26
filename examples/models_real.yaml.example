@@ -1,0 +1,42 @@
+# Model Configuration for Pipeline Optimizer
+#
+# 算子模型: 3个 Qwen 模型，共享 api_key 和 base_url
+# 评估模型: Kimi K2.5
+#
+# 使用方法:
+#   1. 复制此文件为 models_real.yaml
+#   2. 替换 YOUR_API_KEY 为真实的 API key
+
+# Judge configuration (for LLM-as-Judge evaluation)
+judge:
+  model: "kimi-k2.5"
+  api_key: "YOUR_JUDGE_API_KEY"
+  base_url: "https://coding.dashscope.aliyuncs.com/v1"
+  price_per_million: 2.0  # 估算价格，请根据实际情况调整
+  temperature: 0.1
+
+# Pipeline models: 算子可用的模型
+pipeline_models:
+  qwen3-8b:
+    model: "qwen3-8b"
+    api_key: "YOUR_DASHSCOPE_API_KEY"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    price_per_million: 0.1  # 估算价格
+    
+  qwen3-coder-30b-a3b-instruct:
+    model: "qwen3-coder-30b-a3b-instruct"
+    api_key: "YOUR_DASHSCOPE_API_KEY"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    price_per_million: 0.5  # 估算价格
+    
+  qwen3-235b-a22b-thinking-2507:
+    model: "qwen3-235b-a22b-thinking-2507"
+    api_key: "YOUR_DASHSCOPE_API_KEY"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    price_per_million: 2.0  # 估算价格
+
+# Candidate models: 优化时尝试的模型
+candidate_models:
+  - qwen3-8b
+  - qwen3-coder-30b-a3b-instruct
+  - qwen3-235b-a22b-thinking-2507
