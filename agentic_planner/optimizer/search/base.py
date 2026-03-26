@@ -29,6 +29,9 @@ class SearchStrategyType(str, Enum):
     RANDOM = "random"
     """Random search: sample configurations randomly."""
 
+    MOAR = "moar"
+    """MOAR search: Monte-Carlo Operator Action Rollouts."""
+
     BEAM = "beam"
     """Beam search: keep top-k candidates at each iteration."""
 
@@ -88,7 +91,7 @@ class SearchConfig(BaseModel):
     """Base configuration for search strategies."""
 
     strategy: SearchStrategyType = Field(
-        default=SearchStrategyType.BEAM,
+        default=SearchStrategyType.MOAR,
         description="Search strategy to use.",
     )
     objective: OptimizationObjective = Field(

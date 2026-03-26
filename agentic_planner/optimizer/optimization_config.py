@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from agentic_planner.contracts.eval_protocol import EvalConfig, EvaluationMode
 from agentic_planner.optimizer.directive_engine import DirectiveEngineConfig, DirectiveEngineMode
-from agentic_planner.optimizer.search.beam import BeamSearchConfig
+from agentic_planner.optimizer.search.moar import MOARSearchConfig
 
 
 class PriceTable(BaseModel):
@@ -86,9 +86,9 @@ class OptimizationConfig(BaseModel):
     )
 
     # Stage 2: Search (optional)
-    search: Optional[BeamSearchConfig] = Field(
+    search: Optional[MOARSearchConfig] = Field(
         default=None,
-        description="Beam search configuration (for search mode)",
+        description="MOAR search configuration (for search mode)",
     )
 
     # Evaluation
@@ -142,7 +142,7 @@ class OptimizationConfig(BaseModel):
         if self.run_mode in ("search_only", "directive_then_search"):
             if self.search is None:
                 # Create default search config
-                self.search = BeamSearchConfig()
+                self.search = MOARSearchConfig()
         return self
 
     def to_yaml(self) -> str:
@@ -205,10 +205,8 @@ DEFAULT_INFERENCE_CONFIG = OptimizationConfig(
 
 DEFAULT_SEARCH_CONFIG = OptimizationConfig(
     run_mode="search_only",
-    search=BeamSearchConfig(
-        beam_width=4,
+    search=MOARSearchConfig(
         max_iterations=3,
-        expansion_directives=["tighten_filters", "loosen_filters"],
     ),
     evaluation=EvalConfig(
         mode=EvaluationMode.NO_LABELS,
@@ -222,10 +220,8 @@ DEFAULT_FULL_CONFIG = OptimizationConfig(
         mode=DirectiveEngineMode.STATIC,
         directives=["reorder_filters_first", "remove_redundant_ops"],
     ),
-    search=BeamSearchConfig(
-        beam_width=4,
+    search=MOARSearchConfig(
         max_iterations=3,
-        expansion_directives=["tighten_filters", "loosen_filters"],
     ),
     evaluation=EvalConfig(
         mode=EvaluationMode.NO_LABELS,
@@ -263,11 +259,9 @@ directive:
 
 # Stage 2: Search-based optimization (optional)
 # search:
-#   beam_width: 4
 #   max_iterations: 3
-#   expansion_directives:
-#     - tighten_filters
-#     - loosen_filters
+#   max_evaluations: 100
+#   exploration_weight: 1.4
 
 # Evaluation settings
 evaluation:

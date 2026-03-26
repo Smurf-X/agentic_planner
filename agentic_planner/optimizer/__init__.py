@@ -44,12 +44,12 @@ def get_directive_engine():
 def get_search_strategies():
     """Lazy import for search strategies."""
     from agentic_planner.optimizer.search import (
-        BeamSearchStrategy,
         GreedySearchStrategy,
+        MOARSearchStrategy,
         RandomSearchStrategy,
     )
 
-    return BeamSearchStrategy, GreedySearchStrategy, RandomSearchStrategy
+    return MOARSearchStrategy, GreedySearchStrategy, RandomSearchStrategy
 
 
 def get_llm_action_selector():
