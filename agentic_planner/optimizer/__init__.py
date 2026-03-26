@@ -23,6 +23,24 @@ from agentic_planner.optimizer.action import (
     ActionSpace,
     ActionSpaceBuilder,
 )
+from agentic_planner.optimizer.optimization_config import (
+    DEFAULT_DIRECTIVE_ONLY_CONFIG,
+    DEFAULT_FULL_CONFIG,
+    DEFAULT_INFERENCE_CONFIG,
+    DEFAULT_MOAR_SEARCH_CONFIG,
+    DEFAULT_SEARCH_CONFIG,
+    ExecutionConfig,
+    LLMConfig,
+    OptimizationConfig,
+    PriceTable,
+    load_config,
+)
+from agentic_planner.optimizer.search import (
+    MOARSearchConfig,
+    MOARSearchStrategy,
+    SearchStrategyType,
+    create_search_strategy,
+)
 
 __all__ = [
     "OpIdentity",
@@ -31,6 +49,20 @@ __all__ = [
     "Action",
     "ActionSpace",
     "ActionSpaceBuilder",
+    "OptimizationConfig",
+    "ExecutionConfig",
+    "LLMConfig",
+    "PriceTable",
+    "load_config",
+    "DEFAULT_DIRECTIVE_ONLY_CONFIG",
+    "DEFAULT_INFERENCE_CONFIG",
+    "DEFAULT_MOAR_SEARCH_CONFIG",
+    "DEFAULT_SEARCH_CONFIG",
+    "DEFAULT_FULL_CONFIG",
+    "MOARSearchConfig",
+    "MOARSearchStrategy",
+    "SearchStrategyType",
+    "create_search_strategy",
 ]
 
 

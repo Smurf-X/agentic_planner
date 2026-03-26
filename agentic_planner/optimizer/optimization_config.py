@@ -10,7 +10,7 @@ This module provides:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -234,7 +234,7 @@ DEFAULT_INFERENCE_CONFIG = OptimizationConfig(
     ),
 )
 
-DEFAULT_SEARCH_CONFIG = OptimizationConfig(
+DEFAULT_MOAR_SEARCH_CONFIG = OptimizationConfig(
     run_mode="search_only",
     search=MOARSearchConfig(
         max_iterations=3,
@@ -288,8 +288,9 @@ directive:
   # task_description: "Process text data for training"
   # optimization_goal: "balance cost and quality"
 
-# Stage 2: Search-based optimization (optional)
+# Stage 2: MOAR search optimization (optional)
 # search:
+#   strategy: mcts
 #   max_iterations: 3
 #   max_evaluations: 100
 #   exploration_weight: 1.4
@@ -372,3 +373,24 @@ def load_config(
         config = OptimizationConfig.model_validate(data)
 
     return config
+
+
+# Backward-compatible alias during MOAR migration.
+DEFAULT_SEARCH_CONFIG = DEFAULT_MOAR_SEARCH_CONFIG
+
+
+__all__ = [
+    "PriceTable",
+    "LLMConfig",
+    "ExecutionConfig",
+    "SearchExecutionBoundaryConfig",
+    "OptimizationConfig",
+    "DEFAULT_DIRECTIVE_ONLY_CONFIG",
+    "DEFAULT_INFERENCE_CONFIG",
+    "DEFAULT_MOAR_SEARCH_CONFIG",
+    "DEFAULT_SEARCH_CONFIG",
+    "DEFAULT_FULL_CONFIG",
+    "CONFIG_TEMPLATE",
+    "create_sample_config_file",
+    "load_config",
+]

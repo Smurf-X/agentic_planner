@@ -8,6 +8,7 @@ from copy import deepcopy
 import pytest
 
 from agentic_planner.contracts.cost import CostBreakdown
+from agentic_planner import optimizer as optimizer_api
 from agentic_planner.optimizer.action import ActionSpaceBuilder
 from agentic_planner.optimizer.directives.base import DirectiveResult
 from agentic_planner.optimizer.llm_action_selector import LLMActionSelector
@@ -31,6 +32,22 @@ def test_default_search_mode_builds_moar_config() -> None:
         "checkpoint_optimization": False,
         "partition_optimization": False,
     }
+
+
+def test_optimizer_public_api_exports_moar_components() -> None:
+    """Optimizer package exports should expose MOAR-first search surface."""
+    assert optimizer_api.MOARSearchConfig is MOARSearchConfig
+    assert optimizer_api.MOARSearchStrategy is MOARSearchStrategy
+    assert optimizer_api.SearchStrategyType is SearchStrategyType
+    assert optimizer_api.create_search_strategy is create_search_strategy
+
+
+def test_optimizer_public_api_exposes_moar_default_config() -> None:
+    """Optimizer package should expose MOAR-named default search config."""
+    default_cfg = optimizer_api.DEFAULT_MOAR_SEARCH_CONFIG
+    assert default_cfg.run_mode == "search_only"
+    assert isinstance(default_cfg.search, MOARSearchConfig)
+    assert optimizer_api.DEFAULT_SEARCH_CONFIG is default_cfg
 
 
 def test_runner_uses_moar_search_strategy(monkeypatch) -> None:
