@@ -4,7 +4,7 @@
 This module provides:
 1. PipelineEvaluator protocol - interface for all evaluators
 2. StubPipelineEvaluator - deterministic stub for testing
-3. LlmJudgeEvaluator - LLM-as-a-judge quality evaluation
+3. LlmJudgeEvaluator - LLM-as-a-judge quality evaluation (DocETL-style)
 4. RealPipelineEvaluator - runs DJ executor + collects metrics
 """
 
@@ -24,6 +24,15 @@ from agentic_planner.contracts.recipe import DJExecutableConfig
 if TYPE_CHECKING:
     from agentic_planner.generator.llm import BaseLLMClient
     from agentic_planner.optimizer.model_registry import ModelRegistry
+
+
+# Quality score mapping (DocETL style)
+QUALITY_SCORES = {
+    "Satisfactory": 1.0,
+    "Mostly Satisfactory": 0.75,
+    "Partially Satisfactory": 0.5,
+    "Unsatisfactory": 0.25,
+}
 
 
 @runtime_checkable
@@ -72,24 +81,43 @@ class BaseEvaluator(ABC):
 
 class LlmJudgeEvaluator(BaseEvaluator):
     """
-    LLM-as-a-judge quality evaluation.
+    LLM-as-a-judge quality evaluation (DocETL-style).
 
-    Evaluates pipeline outputs by having an LLM judge each sample's quality.
+    Evaluates pipeline outputs by:
+    1. Generating a validator prompt based on pipeline config
+    2. Having an LLM judge each sample's quality
+    3. Using 4-level quality scoring (Satisfactory, Mostly, Partially, Unsatisfactory)
     """
 
-    JUDGE_SYSTEM_PROMPT = """You are a quality evaluator for data processing outputs.
-Your task is to evaluate the quality of processed data on a scale of 0-10.
+    VALIDATOR_GENERATION_PROMPT = """You are an AI assistant tasked with creating custom validation prompts for data processing operations.
 
-Consider:
-- Accuracy and completeness of the processing
-- Whether the output meets the task requirements
-- Quality of the transformation applied
+Analyze the following pipeline and its input/output:
 
-Provide your evaluation as a JSON object:
-{"score": <0-10>, "reasoning": "<brief explanation>"}"""
+Pipeline Operators: {operators}
+Operator Details: {operator_details}
+Sample Input: {sample_input}
+Sample Output: {sample_output}
 
-    JUDGE_USER_PROMPT = """## Task Description
-{task_description}
+Based on this information, create a custom validator prompt (2-3 sentences) that will assess how well the pipeline performed its intended task.
+
+The validator prompt should ask specific questions about:
+1. Recall: Did the pipeline correctly identify/process all relevant data?
+2. Precision: Is the output accurate without errors?
+3. Quality: Are there any issues or inconsistencies?
+
+Important: Tailor the prompt to the specific operators. For example:
+- If filtering data: ask if low-quality data was correctly removed while keeping useful content
+- If transforming data: ask if the transformation is accurate and complete
+- If using LLM: ask if the LLM output is correct and free of hallucinations
+
+Return a JSON object: {{"validator_prompt": "<your prompt>"}}"""
+
+    QUALITY_SYSTEM_PROMPT = """You are an AI assistant tasked with evaluating the quality of data processing outputs.
+
+Assess the output based on the validator prompt criteria. Be strict but fair."""
+
+    QUALITY_USER_PROMPT = """## Validator Criteria
+{validator_prompt}
 
 ## Original Input
 ```json
@@ -101,12 +129,13 @@ Provide your evaluation as a JSON object:
 {output_data}
 ```
 
-## Evaluation Criteria
-- Score 8-10: Excellent - output perfectly meets requirements
-- Score 5-7: Good - output is acceptable with minor issues
-- Score 0-4: Poor - output has significant problems
+Based on the validator criteria, categorize the quality into one of:
+- "Satisfactory": The output fully meets all criteria
+- "Mostly Satisfactory": The output meets most criteria with minor issues
+- "Partially Satisfactory": The output meets some criteria but has problems
+- "Unsatisfactory": The output fails to meet the criteria
 
-Provide your evaluation as JSON."""
+Provide your response as JSON: {{"quality": "<category>", "reason": "<brief explanation>"}}"""
 
     def __init__(
         self,
@@ -124,27 +153,195 @@ Provide your evaluation as JSON."""
         self._llm_client = llm_client
         self._price_per_million = price_per_million or {}
         self._accumulated_cost = CostBreakdown()
+        self._cached_validator_prompt: Optional[str] = None
 
     def set_llm_client(self, client: "BaseLLMClient") -> None:
         """Set the LLM client for judging."""
         self._llm_client = client
 
+    def _generate_validator_prompt(
+        self,
+        pipeline_config: DJExecutableConfig,
+        sample_input: Dict[str, Any],
+        sample_output: Dict[str, Any],
+    ) -> str:
+        """
+        Generate a validator prompt based on pipeline config and sample data.
+
+        This method creates a task-specific evaluation prompt by:
+        1. Extracting operator details from pipeline config
+        2. Using LLM to generate a tailored validator prompt
+
+        Args:
+            pipeline_config: The pipeline configuration
+            sample_input: A sample input record
+            sample_output: The corresponding output record
+
+        Returns:
+            A validator prompt string
+        """
+        if self._cached_validator_prompt:
+            return self._cached_validator_prompt
+
+        if self.eval_config.task_description:
+            self._cached_validator_prompt = self.eval_config.task_description
+            return self._cached_validator_prompt
+
+        operator_details = self._extract_operator_details(pipeline_config)
+        operators = self._extract_operator_names(pipeline_config)
+
+        if not self._llm_client:
+            return self._get_default_validator_prompt(operator_details)
+
+        try:
+            prompt = self.VALIDATOR_GENERATION_PROMPT.format(
+                operators=operators,
+                operator_details=operator_details,
+                sample_input=json.dumps(sample_input, ensure_ascii=False, indent=2)[:500],
+                sample_output=json.dumps(sample_output, ensure_ascii=False, indent=2)[:500],
+            )
+
+            if hasattr(self._llm_client, "generate"):
+                response = self._llm_client.generate(
+                    system_prompt="You are a helpful assistant that creates validation prompts for data pipelines.",
+                    user_prompt=prompt,
+                    temperature=0.3,
+                )
+                text = response.strip()
+                if "```json" in text:
+                    text = text.split("```json")[1].split("```")[0]
+                elif "```" in text:
+                    text = text.split("```")[1].split("```")[0]
+                result = json.loads(text)
+                validator_prompt = result.get("validator_prompt", "")
+            elif hasattr(self._llm_client, "complete_json"):
+                result = self._llm_client.complete_json(
+                    system="You are a helpful assistant that creates validation prompts for data pipelines.",
+                    user=prompt,
+                )
+                validator_prompt = result.get("validator_prompt", "")
+            else:
+                validator_prompt = self._get_default_validator_prompt(operator_details)
+
+            if validator_prompt:
+                self._cached_validator_prompt = validator_prompt
+                return validator_prompt
+
+            return self._get_default_validator_prompt(operator_details)
+
+        except Exception as e:
+            return self._get_default_validator_prompt(operator_details)
+
+    def _get_default_validator_prompt(self, operator_details: str) -> str:
+        """Get a default validator prompt based on operator details."""
+        details_lower = operator_details.lower()
+
+        if "filter" in details_lower:
+            if "language" in details_lower:
+                return "Did the pipeline correctly identify and keep only the target language content while removing non-target language data?"
+            elif "length" in details_lower:
+                return "Did the pipeline correctly filter out texts that are too short or too long while keeping appropriately sized content?"
+            else:
+                return "Did the pipeline correctly filter out low-quality or irrelevant data while retaining useful content?"
+        elif "mapper" in details_lower:
+            return "Did the pipeline correctly transform the input data? Is the output accurate and complete?"
+        else:
+            return "Did the pipeline process the data correctly? Is the output accurate and complete?"
+
+    def _extract_operator_names(self, pipeline_config: DJExecutableConfig) -> str:
+        """Extract operator names from pipeline config."""
+        process = pipeline_config.get("process", [])
+        if not process:
+            return "unknown"
+
+        op_names = []
+        for step in process:
+            if isinstance(step, dict):
+                op_names.extend(list(step.keys()))
+
+        return ", ".join(op_names) if op_names else "unknown"
+
+    def _extract_operator_details(self, pipeline_config: DJExecutableConfig) -> str:
+        """
+        Extract detailed operator information from pipeline config.
+
+        Returns a human-readable description of what each operator does.
+        """
+        process = pipeline_config.get("process", [])
+        if not process:
+            return "unknown"
+
+        details = []
+        for step in process:
+            if isinstance(step, dict):
+                for op_name, op_params in step.items():
+                    detail = self._describe_operator(op_name, op_params or {})
+                    details.append(detail)
+
+        return "; ".join(details) if details else "unknown"
+
+    def _describe_operator(self, op_name: str, params: Dict[str, Any]) -> str:
+        """Generate a human-readable description of an operator."""
+        if "text_length_filter" in op_name:
+            min_len = params.get("min_len", 0)
+            max_len = params.get("max_len", float("inf"))
+            return f"Filter text by length: keep texts with {min_len}-{max_len} characters"
+
+        elif "language_id_score_filter" in op_name:
+            lang = params.get("lang", "unknown")
+            min_score = params.get("min_score", 0)
+            return f"Filter by language: keep {lang} text with confidence >= {min_score}"
+
+        elif "words_num_filter" in op_name:
+            min_num = params.get("min_num", 0)
+            max_num = params.get("max_num", float("inf"))
+            return f"Filter by word count: keep texts with {min_num}-{max_num} words"
+
+        elif "special_characters_filter" in op_name:
+            max_ratio = params.get("max_ratio", 1.0)
+            return f"Filter by special character ratio: keep texts with special chars <= {max_ratio}"
+
+        elif "perplexity_filter" in op_name:
+            max_ppl = params.get("max_ppl", float("inf"))
+            return f"Filter by perplexity: keep texts with perplexity <= {max_ppl}"
+
+        elif "llm" in op_name.lower():
+            model = params.get("api_or_hf_model", params.get("api_model", "unknown"))
+            return f"LLM operator using model {model}"
+
+        elif "mapper" in op_name:
+            return f"Transform data using {op_name}"
+
+        elif "filter" in op_name:
+            return f"Filter data using {op_name}"
+
+        else:
+            return f"Process data using {op_name}"
+
     def evaluate_single(
         self,
         input_data: Dict[str, Any],
         output_data: Dict[str, Any],
+        validator_prompt: Optional[str] = None,
     ) -> tuple[float, str]:
         """
         Evaluate a single input-output pair.
+
+        Args:
+            input_data: Input record
+            output_data: Output record
+            validator_prompt: Optional custom validator prompt
 
         Returns:
             Tuple of (score 0-1, reasoning)
         """
         if not self._llm_client:
-            raise ValueError("LLM client not set")
+            return 0.5, "No LLM client available"
 
-        user_prompt = self.JUDGE_USER_PROMPT.format(
-            task_description=self.eval_config.task_description or "Data processing",
+        vp = validator_prompt or "Is the output correct and complete?"
+
+        user_prompt = self.QUALITY_USER_PROMPT.format(
+            validator_prompt=vp,
             input_data=json.dumps(input_data, ensure_ascii=False, indent=2),
             output_data=json.dumps(output_data, ensure_ascii=False, indent=2),
         )
@@ -152,12 +349,12 @@ Provide your evaluation as JSON."""
         try:
             if hasattr(self._llm_client, "complete_json"):
                 result = self._llm_client.complete_json(
-                    system=self.JUDGE_SYSTEM_PROMPT,
+                    system=self.QUALITY_SYSTEM_PROMPT,
                     user=user_prompt,
                 )
             elif hasattr(self._llm_client, "generate"):
                 response = self._llm_client.generate(
-                    system_prompt=self.JUDGE_SYSTEM_PROMPT,
+                    system_prompt=self.QUALITY_SYSTEM_PROMPT,
                     user_prompt=user_prompt,
                     temperature=0.1,
                 )
@@ -170,8 +367,10 @@ Provide your evaluation as JSON."""
             else:
                 raise ValueError("LLM client must have 'complete_json' or 'generate' method")
 
-            score = float(result.get("score", 5)) / 10.0
-            reasoning = result.get("reasoning", "")
+            quality = result.get("quality", "Partially Satisfactory")
+            reasoning = result.get("reason", "")
+
+            score = QUALITY_SCORES.get(quality, 0.5)
 
             return score, reasoning
 
@@ -182,11 +381,29 @@ Provide your evaluation as JSON."""
         self,
         inputs: List[Dict[str, Any]],
         outputs: List[Dict[str, Any]],
+        pipeline_config: Optional[DJExecutableConfig] = None,
     ) -> List[tuple[float, str]]:
-        """Evaluate multiple input-output pairs."""
+        """
+        Evaluate multiple input-output pairs.
+
+        Args:
+            inputs: List of input records
+            outputs: List of output records
+            pipeline_config: Optional pipeline config for generating validator prompt
+
+        Returns:
+            List of (score, reasoning) tuples
+        """
+        validator_prompt = None
+
+        if pipeline_config and inputs and outputs:
+            validator_prompt = self._generate_validator_prompt(
+                pipeline_config, inputs[0], outputs[0]
+            )
+
         results = []
         for inp, out in zip(inputs, outputs):
-            score, reasoning = self.evaluate_single(inp, out)
+            score, reasoning = self.evaluate_single(inp, out, validator_prompt)
             results.append((score, reasoning))
         return results
 
@@ -412,7 +629,9 @@ class RealPipelineEvaluator(BaseEvaluator):
                     outputs, ground_truths, gt_key
                 )
             else:
-                eval_results = self._judge_evaluator.evaluate_batch(inputs, outputs)
+                eval_results = self._judge_evaluator.evaluate_batch(
+                    inputs, outputs, pipeline_config=cfg
+                )
 
             for score, reasoning in eval_results:
                 scores.append(score)

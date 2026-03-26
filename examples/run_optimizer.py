@@ -3,10 +3,16 @@
 End-to-end optimizer example with ModelRegistry support.
 
 This script demonstrates how to run the pipeline optimizer with:
-- 4 operators (2 filters + 2 LLM operators)
+- 4 operators (2 basic filters + 2 LLM operators)
 - Fixed sampling (configurable samples)
 - BeamSearch strategy with LLM-guided action selection
 - Multiple model support via models.yaml
+
+Pipeline stages:
+1. text_length_filter - Filter by text length (no LLM, fast)
+2. language_id_score_filter - Filter by language (no LLM, fast)
+3. words_num_filter - Filter by word count (no LLM)
+4. special_characters_filter - Filter by special character ratio (no LLM)
 
 Usage:
     # Stub mode (no API calls, for testing)
@@ -20,9 +26,25 @@ Usage:
     python examples/run_optimizer.py --sample-size 10
 """
 
+# Suppress Data-Juicer logging before any imports
+import os
+os.environ["TQDM_DISABLE"] = "1"
+
+import logging
+logging.getLogger("data_juicer").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("datasets").setLevel(logging.ERROR)
+
+# Suppress loguru output from Data-Juicer
+try:
+    from loguru import logger
+    logger.remove()
+    logger.add(lambda msg: None, level="WARNING")
+except ImportError:
+    pass
+
 import argparse
 import json
-import os
 import re
 from pathlib import Path
 
@@ -62,9 +84,23 @@ def expand_env_vars(value):
 
 
 def create_pipeline_config(
-    dataset_path: str, output_path: str, llm_model: str = "gpt-4o-mini"
+    dataset_path: str,
+    output_path: str,
+    llm_model: str = "gpt-4o-mini",
+    api_endpoint: str = "",
+    api_key: str = "",
 ) -> DJExecutableConfig:
-    """Create initial pipeline configuration with 4 operators."""
+    """Create initial pipeline configuration with 4 non-LLM operators.
+    
+    Pipeline stages:
+    1. text_length_filter - Filter by text length (no LLM)
+    2. language_id_score_filter - Filter by language (no LLM)
+    3. words_num_filter - Filter by word count (no LLM)
+    4. special_characters_filter - Filter by special character ratio (no LLM)
+    
+    All operators are non-LLM based, so no API calls are needed during execution.
+    The optimizer can adjust parameters like min_len, max_len, min_score, etc.
+    """
     import os
 
     abs_dataset_path = os.path.abspath(dataset_path)
@@ -77,13 +113,24 @@ def create_pipeline_config(
             {
                 "text_length_filter": {
                     "min_len": 20,
-                    "max_len": 500,
+                    "max_len": 1000,
                 }
             },
             {
                 "language_id_score_filter": {
                     "lang": "en",
                     "min_score": 0.8,
+                }
+            },
+            {
+                "words_num_filter": {
+                    "min_num": 5,
+                    "max_num": 200,
+                }
+            },
+            {
+                "special_characters_filter": {
+                    "max_ratio": 0.3,
                 }
             },
         ],
@@ -221,15 +268,44 @@ def main():
 
         print(f"  - Judge model: {registry.get_judge_config().model}")
 
+    # Determine default LLM model for pipeline
+    if args.pipeline_llm_model == "gpt-4o-mini" and registry:
+        candidate_models = registry.get_candidate_models()
+        if candidate_models:
+            default_llm_model = candidate_models[0]
+        else:
+            models = registry.list_models()
+            default_llm_model = models[0] if models else args.pipeline_llm_model
+    else:
+        default_llm_model = args.pipeline_llm_model
+
+    # Get API endpoint and key from registry
+    api_endpoint = ""
+    api_key = ""
+    if registry:
+        model_config = registry.get_model(default_llm_model)
+        if model_config:
+            api_endpoint = model_config.base_url or ""
+            api_key = model_config.api_key or ""
+            # Set environment variable for Data-Juicer LLM operators
+            if api_key:
+                os.environ["OPENAI_API_KEY"] = api_key
+
     # Create pipeline config
     print("\n[2/7] Creating initial pipeline config...")
     initial_config = create_pipeline_config(
-        dataset_path, output_path, llm_model=args.pipeline_llm_model
+        dataset_path,
+        output_path,
+        llm_model=default_llm_model,
+        api_endpoint=api_endpoint,
+        api_key=api_key,
     )
     print(f"  - Dataset: {dataset_path}")
     print(f"  - Output: {output_path}")
     print(f"  - Operators: {len(initial_config['process'])}")
-    print(f"  - Pipeline LLM model: {args.pipeline_llm_model}")
+    print(f"  - Pipeline LLM model: {default_llm_model}")
+    if api_endpoint:
+        print(f"  - API endpoint: {api_endpoint}")
 
     # Load data sample
     print("\n[3/7] Loading data sample...")

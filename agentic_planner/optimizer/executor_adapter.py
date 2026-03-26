@@ -489,9 +489,9 @@ class DJExecutorAdapter(ExecutorAdapter):
         Returns:
             Tuple of (outputs list, token_usage dict)
         """
-        from data_juicer.config import init_configs
-        from data_juicer.core import DefaultExecutor
-        import yaml
+        import sys
+        import io
+        from contextlib import redirect_stdout, redirect_stderr
 
         work_dir = os.path.abspath(work_dir)
         config_path = os.path.join(work_dir, "pipeline_config.yaml")
@@ -500,21 +500,35 @@ class DJExecutorAdapter(ExecutorAdapter):
         exec_cfg = dict(cfg)
         exec_cfg["work_dir"] = work_dir
         exec_cfg["export_path"] = output_path
+        # Disable DJ monitoring/logging
+        exec_cfg["open_monitor"] = False
 
         with open(config_path, "w", encoding="utf-8") as f:
+            import yaml
             yaml.dump(exec_cfg, f, allow_unicode=True, default_flow_style=False)
 
         try:
-            args = ["--config", config_path]
-            dj_cfg = init_configs(args=args)
+            from data_juicer.config import init_configs
+            from data_juicer.core import DefaultExecutor
 
-            executor = DefaultExecutor(dj_cfg)
-            executor.run(skip_return=True)
+            # Redirect stdout/stderr to suppress DJ logging
+            old_stdout = sys.stdout
+            old_stderr = sys.stderr
+            sys.stdout = io.StringIO()
+            sys.stderr = io.StringIO()
+
+            try:
+                args = ["--config", config_path]
+                dj_cfg = init_configs(args=args)
+                executor = DefaultExecutor(dj_cfg)
+                executor.run(skip_return=True)
+            finally:
+                sys.stdout = old_stdout
+                sys.stderr = old_stderr
 
         except Exception as e:
             print(f"DJ execution error: {e}")
             import traceback
-
             traceback.print_exc()
             return [], {"prompt_tokens": 0, "completion_tokens": 0, "model_usage": {}}
 
