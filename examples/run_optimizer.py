@@ -5,7 +5,7 @@ End-to-end optimizer example with ModelRegistry support.
 This script demonstrates how to run the pipeline optimizer with:
 - 4 operators (2 basic filters + 2 LLM operators)
 - Fixed sampling (configurable samples)
-- BeamSearch strategy with LLM-guided action selection
+- MOAR strategy (root-only baseline for Task 1)
 - Multiple model support via models.yaml
 
 Pipeline stages:
@@ -51,18 +51,12 @@ from pathlib import Path
 from agentic_planner import (
     DJExecutableConfig,
     EvalConfig,
-    BeamSearchConfig,
-    BeamSearchStrategy,
+    MOARSearchConfig,
+    MOARSearchStrategy,
     save_executable_config,
 )
 from agentic_planner.optimizer.evaluator import RealPipelineEvaluator, StubPipelineEvaluator
 from agentic_planner.optimizer.executor_adapter import DJExecutorAdapter, StubExecutorAdapter
-from agentic_planner.optimizer.action import ActionSpaceBuilder
-from agentic_planner.optimizer.llm_action_selector import LLMActionSelector
-from agentic_planner.optimizer.directives import (
-    TightenFiltersDirective,
-    LoosenFiltersDirective,
-)
 from agentic_planner.optimizer.model_registry import ModelRegistry, ModelsConfig
 
 
@@ -192,12 +186,6 @@ def main():
         type=int,
         default=10,
         help="Number of samples for evaluation",
-    )
-    parser.add_argument(
-        "--beam-width",
-        type=int,
-        default=3,
-        help="Beam width",
     )
     parser.add_argument(
         "--max-iterations",
@@ -352,21 +340,11 @@ def main():
 
     print(f"  - Sample size: {args.sample_size}")
 
-    # Configure action space
+    # Configure search
     print("\n[5/7] Configuring action space...")
+    print("  - MOAR baseline: evaluate root configuration only")
 
-    action_builder = ActionSpaceBuilder(
-        directives=[
-            TightenFiltersDirective(intensity=0.1),
-            LoosenFiltersDirective(intensity=0.1),
-        ],
-        model_registry=registry if not args.stub else None,
-    )
-    print(f"  - Directives: tighten_filters, loosen_filters")
-    if not args.stub and registry:
-        print(f"  - Model swap: {len(registry.get_candidate_models())} candidate models")
-
-    # Setup LLM Action Selector
+    # Setup optional selection context (not used in Task 1 MOAR baseline)
     print("\n[6/7] Setting up LLM Action Selector...")
 
     use_llm_selection = not args.no_llm_selection
@@ -381,44 +359,28 @@ def main():
                 selector_model = registry.list_models()[0] if registry.list_models() else None
 
         if selector_model:
-            selector_client = registry.create_client(selector_model)
-            llm_selector = LLMActionSelector(
-                llm_client=selector_client,
-                model=selector_model,
-            )
             print(f"  - Enabled: True")
             print(f"  - Selector model: {selector_model}")
             print(f"  - Top-k: {args.llm_selection_top_k}")
         else:
-            llm_selector = None
             print(f"  - Enabled: False (no model available)")
     else:
-        llm_selector = None
         print(f"  - Enabled: False (fallback to first-k)")
 
-    # Configure BeamSearch
-    print("\n[7/7] Configuring BeamSearch strategy...")
+    # Configure MOAR search
+    print("\n[7/7] Configuring MOAR strategy...")
 
-    beam_config = BeamSearchConfig(
-        beam_width=args.beam_width,
+    moar_config = MOARSearchConfig(
         max_iterations=args.max_iterations,
-        use_llm_selection=use_llm_selection,
-        llm_selection_top_k=args.llm_selection_top_k,
-        track_pareto=True,
-        cost_weight=0.3,
     )
 
-    strategy = BeamSearchStrategy(
-        config=beam_config,
+    strategy = MOARSearchStrategy(
+        config=moar_config,
         evaluator=evaluator,
-        action_builder=action_builder,
-        llm_selector=llm_selector,
     )
-    strategy.set_data_sample(data_sample)
 
-    print(f"  - Beam width: {args.beam_width}")
     print(f"  - Max iterations: {args.max_iterations}")
-    print(f"  - LLM selection: {use_llm_selection}")
+    print(f"  - Strategy alias: mcts/moar")
 
     # Run optimization
     print("\n" + "=" * 60)

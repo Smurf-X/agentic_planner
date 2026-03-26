@@ -60,7 +60,7 @@ def create_search_strategy(
     Factory function to create search strategies.
 
     Args:
-        strategy_type: Type of search ("greedy", "random", "mcts")
+        strategy_type: Type of search ("greedy", "random", "mcts", "moar")
         config: Configuration dict for the strategy
         evaluator: Evaluator for scoring configurations
 
@@ -77,7 +77,7 @@ def create_search_strategy(
             RandomSearchConfig.model_validate(config),
             evaluator,
         )
-    elif strategy_type == "mcts":
+    elif strategy_type in ("mcts", "moar"):
         return MOARSearchStrategy(
             MOARSearchConfig.model_validate(config),
             evaluator,

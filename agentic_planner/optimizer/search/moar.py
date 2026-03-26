@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""MOAR search skeleton for staged migration from beam search."""
+"""MOAR search skeleton for staged migration baseline."""
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field
@@ -12,6 +13,7 @@ from agentic_planner.optimizer.search.base import (
     BaseSearchStrategy,
     SearchConfig,
     SearchReport,
+    SearchResult,
     SearchStrategyType,
 )
 
@@ -51,14 +53,30 @@ class MOARSearchStrategy(BaseSearchStrategy):
         self._moar_config = config
 
     def search(self, root: DJExecutableConfig) -> SearchReport:
-        """Execute MOAR search (stub implementation for Task 1)."""
-        _ = root
+        """Execute minimal MOAR search by evaluating only the root."""
+        cost, quality = self._evaluate(root)
+        if self._evaluator is None:
+            self._evaluated_count = 1
+
+        self._iteration_count = 1
+        root_result = SearchResult(
+            config=deepcopy(root),
+            cost=cost,
+            quality=quality,
+            origin="root",
+            generation=0,
+        )
+
         return SearchReport(
             ok=True,
-            candidates=[],
-            total_iterations=0,
-            total_evaluations=0,
-            metrics={"strategy": "moar_stub"},
+            candidates=[root_result],
+            pareto_front=[root_result],
+            total_iterations=self._iteration_count,
+            total_evaluations=self._evaluated_count,
+            best_by_quality=root_result,
+            best_by_cost=root_result,
+            best_balanced=root_result,
+            metrics={"strategy": "moar_root_only"},
         )
 
 

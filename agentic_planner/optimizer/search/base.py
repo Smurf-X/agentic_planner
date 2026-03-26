@@ -3,7 +3,7 @@
 Search strategy abstractions for pipeline optimization.
 
 This module defines the pluggable search interface that allows
-different optimization strategies (greedy, beam search, MCTS, etc.)
+different optimization strategies (greedy, random, MCTS, etc.)
 to be used interchangeably.
 """
 
