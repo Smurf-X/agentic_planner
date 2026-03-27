@@ -252,10 +252,18 @@ class ModelRegistry:
 
         cfg = self.get_model_or_raise(name)
 
+        default_chat_params: Dict[str, Any] = {}
+        extra = cfg.model_extra or {}
+        if isinstance(extra.get("default_chat_params"), dict):
+            default_chat_params = dict(extra["default_chat_params"])
+        elif isinstance(extra.get("extra_body"), dict):
+            default_chat_params = {"extra_body": dict(extra["extra_body"])}
+
         return OpenAICompatibleJsonClient(
             model=cfg.model,
             api_key=cfg.api_key,
             base_url=cfg.base_url,
+            default_chat_params=default_chat_params,
         )
 
     def create_judge_client(self):
@@ -264,10 +272,18 @@ class ModelRegistry:
 
         judge = self._config.judge
 
+        default_chat_params = {}
+        judge_extra = judge.model_extra or {}
+        if isinstance(judge_extra.get("default_chat_params"), dict):
+            default_chat_params = dict(judge_extra["default_chat_params"])
+        elif isinstance(judge_extra.get("extra_body"), dict):
+            default_chat_params = {"extra_body": dict(judge_extra["extra_body"])}
+
         return OpenAICompatibleJsonClient(
             model=judge.model,
             api_key=judge.api_key,
             base_url=judge.base_url,
+            default_chat_params=default_chat_params,
         )
 
     def compute_token_cost(
