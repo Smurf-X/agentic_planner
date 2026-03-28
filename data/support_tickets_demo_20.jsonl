@@ -1,0 +1,20 @@
+{"ticket_id": "T001", "text": "After upgrading to v2.3, the export button crashes with a traceback every time I click CSV export.", "source": "email", "label_hint": "actionable"}
+{"ticket_id": "T002", "text": "!!! BEST DEAL !!! buy followers now $$$", "source": "web", "label_hint": "noise"}
+{"ticket_id": "T003", "text": "Need dark mode in dashboard settings. Current bright UI causes eye strain for night-shift operators.", "source": "in_app", "label_hint": "actionable"}
+{"ticket_id": "T004", "text": "hi", "source": "chat", "label_hint": "noise"}
+{"ticket_id": "T005", "text": "Password reset emails are delayed by about 20 minutes for enterprise tenants.", "source": "email", "label_hint": "actionable"}
+{"ticket_id": "T006", "text": "Can you add support for filtering reports by custom fiscal quarter labels?", "source": "in_app", "label_hint": "actionable"}
+{"ticket_id": "T007", "text": "?????????????????????", "source": "web", "label_hint": "noise"}
+{"ticket_id": "T008", "text": "The mobile app logs out users unexpectedly when switching from Wi-Fi to cellular.", "source": "chat", "label_hint": "actionable"}
+{"ticket_id": "T009", "text": "Your product is awesome, thanks team!", "source": "email", "label_hint": "non_actionable"}
+{"ticket_id": "T010", "text": "Billing page shows duplicate invoices for one customer after plan downgrade.", "source": "in_app", "label_hint": "actionable"}
+{"ticket_id": "T011", "text": "pls fix", "source": "chat", "label_hint": "noise"}
+{"ticket_id": "T012", "text": "Search results ignore date filters when query contains Chinese characters.", "source": "web", "label_hint": "actionable"}
+{"ticket_id": "T013", "text": "I want to understand pricing tiers better.", "source": "email", "label_hint": "non_actionable"}
+{"ticket_id": "T014", "text": "Webhook retries stop after the first timeout instead of exponential backoff.", "source": "in_app", "label_hint": "actionable"}
+{"ticket_id": "T015", "text": "sale sale sale click here now", "source": "web", "label_hint": "noise"}
+{"ticket_id": "T016", "text": "Could you allow bulk reassignment of tickets to a queue from the table view?", "source": "chat", "label_hint": "actionable"}
+{"ticket_id": "T017", "text": "The SSO callback URL validation rejects valid URLs with query parameters.", "source": "email", "label_hint": "actionable"}
+{"ticket_id": "T018", "text": "Thank you for quick support.", "source": "chat", "label_hint": "non_actionable"}
+{"ticket_id": "T019", "text": "API returns 500 on /v1/projects/{id}/members when role field is null.", "source": "web", "label_hint": "actionable"}
+{"ticket_id": "T020", "text": "$$$$ easy money crypto signal $$$$", "source": "web", "label_hint": "noise"}

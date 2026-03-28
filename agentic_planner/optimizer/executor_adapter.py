@@ -551,65 +551,47 @@ class DJExecutorAdapter(ExecutorAdapter):
         work_dir: str,
     ) -> Dict[str, Any]:
         """
-        Collect token usage from pipeline execution.
+        Collect token usage from Data-Juicer usage summary output.
 
-        For LLM operators, estimate token usage based on input/output sizes.
+        This method only consumes explicit usage emitted by Data-Juicer.
+        If unavailable, token counts remain zero by design.
         """
-        process = cfg.get("process", [])
+        _ = cfg
+        _ = outputs
 
-        llm_ops = {
-            "llm_analysis_filter",
-            "llm_filter",
-            "llm_map",
-            "optimize_qa_mapper",
-            "optimize_prompt_mapper",
-            "generate_qa_from_text_mapper",
-            "generate_qa_from_examples_mapper",
-            "image_captioning_mapper",
-            "mllm_mapper",
-            "extract_keyword_mapper",
-            "extract_event_mapper",
-            "extract_entity_relation_mapper",
-            "extract_entity_attribute_mapper",
-            "llm_quality_score_filter",
-        }
+        usage_path = Path(work_dir) / "llm_usage_summary.json"
+        if not usage_path.exists():
+            candidates = list(Path(work_dir).glob("**/llm_usage_summary.json"))
+            if not candidates:
+                return {"prompt_tokens": 0, "completion_tokens": 0, "model_usage": {}}
+            usage_path = max(candidates, key=lambda p: p.stat().st_mtime)
 
-        total_prompt = 0
-        total_completion = 0
-        model_usage: Dict[str, Dict[str, int]] = {}
-
-        used_llm_ops = []
-        for step in process:
-            if not isinstance(step, dict):
-                continue
-            op_name = next(iter(step.keys()), "")
-            if op_name in llm_ops:
-                params = step.get(op_name, {})
-                if isinstance(params, dict):
-                    model = params.get("api_model") or params.get("model") or "unknown"
-                    used_llm_ops.append((op_name, model))
-
-        if not used_llm_ops:
+        try:
+            with usage_path.open("r", encoding="utf-8") as f:
+                payload = json.load(f)
+        except Exception:
             return {"prompt_tokens": 0, "completion_tokens": 0, "model_usage": {}}
 
-        for output in outputs:
-            text = output.get("text", "")
-            output_tokens = len(text) // 4
+        if not isinstance(payload, dict):
+            return {"prompt_tokens": 0, "completion_tokens": 0, "model_usage": {}}
 
-            for op_name, model in used_llm_ops:
-                input_tokens = output_tokens * 2
+        prompt_tokens = int(payload.get("prompt_tokens", 0) or 0)
+        completion_tokens = int(payload.get("completion_tokens", 0) or 0)
+        raw_model_usage = payload.get("model_usage", {})
 
-                total_prompt += input_tokens
-                total_completion += output_tokens
-
-                if model not in model_usage:
-                    model_usage[model] = {"prompt": 0, "completion": 0}
-                model_usage[model]["prompt"] += input_tokens
-                model_usage[model]["completion"] += output_tokens
+        model_usage: Dict[str, Dict[str, int]] = {}
+        if isinstance(raw_model_usage, dict):
+            for model, usage in raw_model_usage.items():
+                if not isinstance(usage, dict):
+                    continue
+                model_usage[str(model)] = {
+                    "prompt": int(usage.get("prompt", 0) or 0),
+                    "completion": int(usage.get("completion", 0) or 0),
+                }
 
         return {
-            "prompt_tokens": total_prompt,
-            "completion_tokens": total_completion,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
             "model_usage": model_usage,
         }
 
