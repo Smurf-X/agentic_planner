@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Protocol, Union, cast, runtime_checkable
+from typing import Any, Dict, Optional, Protocol, Union, cast, runtime_checkable
 
 from agent_runtime.api.service import AgentRuntimeService
 
@@ -15,7 +15,7 @@ class RuntimeResponse(Protocol):
 
     ok: bool
     data: Dict[str, Any]
-    error: str
+    error: Optional[str]
 
 
 @dataclass
@@ -24,7 +24,7 @@ class BoundaryErrorResponse:
 
     ok: bool
     data: Dict[str, Any]
-    error: str = ""
+    error: Optional[str] = ""
 
 
 @runtime_checkable
