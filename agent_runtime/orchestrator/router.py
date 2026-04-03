@@ -35,10 +35,10 @@ class Router:
                 options=dict(safe_payload.get("options", {})),
             )
 
-        if action == "list_ops":
+        if action in {"list", "list_ops"}:
             return list_ops_tool(options=dict(safe_payload.get("options", {})))
 
-        if action == "explain_op":
+        if action in {"explain", "explain_op"}:
             return explain_op_tool(
                 operator_name=str(safe_payload.get("operator_name", "")),
                 options=dict(safe_payload.get("options", {})),

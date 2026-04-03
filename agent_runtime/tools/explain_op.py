@@ -17,4 +17,4 @@ def explain_op_tool(operator_name: str, options: Dict[str, Any]) -> Dict[str, An
         "params": [{"name": "text_key", "type": "str", "required": False}],
         "options": dict(options),
     }
-    return {"ok": True, "data": explanation, "timing_ms": 1}
+    return {"ok": True, "data": explanation, "timing_ms": 1, "error": None}

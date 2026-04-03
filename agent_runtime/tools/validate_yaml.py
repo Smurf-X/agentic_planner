@@ -29,8 +29,10 @@ def validate_yaml_tool(yaml_text_or_path: str, options: Dict[str, Any]) -> Dict[
         }
 
     errors = validate_executable_config(parsed)
+    error_message = "validation failed" if errors else None
     return {
         "ok": not errors,
         "data": {"valid": not errors, "errors": errors, "options": dict(options)},
         "timing_ms": 1,
+        "error": error_message,
     }

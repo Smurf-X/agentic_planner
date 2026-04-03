@@ -14,7 +14,7 @@ def _error_envelope(error: str) -> Dict[str, Any]:
 
 def _ok_envelope(data: Dict[str, Any], token_usage: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Build a normalized success envelope."""
-    response: Dict[str, Any] = {"ok": True, "data": data, "timing_ms": 1}
+    response: Dict[str, Any] = {"ok": True, "data": data, "timing_ms": 1, "error": None}
     if token_usage is not None:
         response["token_usage"] = token_usage
     return response

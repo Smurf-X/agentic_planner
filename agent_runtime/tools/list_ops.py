@@ -20,4 +20,9 @@ def list_ops_tool(options: Dict[str, Any]) -> Dict[str, Any]:
             "summary": "Filter rows by language confidence score.",
         },
     ]
-    return {"ok": True, "data": {"operators": operators, "options": dict(options)}, "timing_ms": 1}
+    return {
+        "ok": True,
+        "data": {"operators": operators, "options": dict(options)},
+        "timing_ms": 1,
+        "error": None,
+    }
