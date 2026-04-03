@@ -13,4 +13,6 @@ class ToolResponse:
 
     ok: bool
     data: Dict[str, Any] = field(default_factory=dict)
+    timing_ms: int = 1
     error: Optional[str] = None
+    token_usage: Optional[Dict[str, Any]] = None

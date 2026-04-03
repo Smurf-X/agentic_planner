@@ -5,8 +5,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from agent_runtime.api.schemas import ToolResponse
+from agent_runtime.tools.envelope import ok_response
 
-def list_ops_tool(options: Dict[str, Any]) -> Dict[str, Any]:
+
+def list_ops_tool(options: Dict[str, Any]) -> ToolResponse:
     """Return deterministic operator metadata list."""
     operators: List[Dict[str, Any]] = [
         {
@@ -20,9 +23,4 @@ def list_ops_tool(options: Dict[str, Any]) -> Dict[str, Any]:
             "summary": "Filter rows by language confidence score.",
         },
     ]
-    return {
-        "ok": True,
-        "data": {"operators": operators, "options": dict(options)},
-        "timing_ms": 1,
-        "error": None,
-    }
+    return ok_response(data={"operators": operators, "options": dict(options)})

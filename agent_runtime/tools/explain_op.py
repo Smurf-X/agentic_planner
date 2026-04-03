@@ -5,11 +5,14 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from agent_runtime.api.schemas import ToolResponse
+from agent_runtime.tools.envelope import error_response, ok_response
 
-def explain_op_tool(operator_name: str, options: Dict[str, Any]) -> Dict[str, Any]:
+
+def explain_op_tool(operator_name: str, options: Dict[str, Any]) -> ToolResponse:
     """Return deterministic explanation for a named operator."""
     if not operator_name:
-        return {"ok": False, "data": {}, "timing_ms": 1, "error": "missing required argument: operator_name"}
+        return error_response("missing required argument: operator_name")
 
     explanation = {
         "name": operator_name,
@@ -17,4 +20,4 @@ def explain_op_tool(operator_name: str, options: Dict[str, Any]) -> Dict[str, An
         "params": [{"name": "text_key", "type": "str", "required": False}],
         "options": dict(options),
     }
-    return {"ok": True, "data": explanation, "timing_ms": 1, "error": None}
+    return ok_response(data=explanation)
