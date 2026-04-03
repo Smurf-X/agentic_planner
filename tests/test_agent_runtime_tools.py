@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import sys
+import types
 from pathlib import Path
 
 from agent_runtime.api.schemas import ToolResponse
@@ -12,6 +14,59 @@ from agent_runtime.tools.generate_yaml import generate_yaml_tool
 from agent_runtime.tools.list_ops import list_ops_tool
 from agent_runtime.tools.optimize_yaml import optimize_yaml_tool
 from agent_runtime.tools.validate_yaml import validate_yaml_tool
+
+
+def _install_fake_op_searcher(monkeypatch) -> None:
+    """Install a fake data_juicer.tools.op_search.OPSearcher module."""
+
+    class _Record:
+        def __init__(
+            self,
+            name: str,
+            op_type: str,
+            tags,
+            desc: str,
+            sig: str,
+            param_desc: str,
+        ) -> None:
+            self.name = name
+            self.type = op_type
+            self.tags = tags
+            self.desc = desc
+            self.sig = sig
+            self.param_desc = param_desc
+
+    class _FakeOPSearcher:
+        def __init__(self, specified_op_list=None, include_formatter: bool = False):
+            records = [
+                _Record(
+                    name="alpha_filter",
+                    op_type="filter",
+                    tags=["quality", "english"],
+                    desc="Filter low-confidence English rows.",
+                    sig="(threshold: float = 0.8)",
+                    param_desc="threshold: keep rows with score >= threshold",
+                ),
+                _Record(
+                    name="beta_mapper",
+                    op_type="mapper",
+                    tags=["text"],
+                    desc="Normalize text fields.",
+                    sig="(text_key: str = 'text')",
+                    param_desc="text_key: input text field",
+                ),
+            ]
+            if specified_op_list:
+                allow = set(specified_op_list)
+                records = [record for record in records if record.name in allow]
+            if not include_formatter:
+                self.op_records = records
+            else:
+                self.op_records = records
+
+    fake_module = types.ModuleType("data_juicer.tools.op_search")
+    fake_module.OPSearcher = _FakeOPSearcher
+    monkeypatch.setitem(sys.modules, "data_juicer.tools.op_search", fake_module)
 
 
 def test_generate_yaml_tool_returns_structured_payload() -> None:
@@ -91,9 +146,56 @@ def test_metadata_tools_return_normalized_envelopes() -> None:
         else:
             assert result.error
 
-    assert list_result.data["operators"][0]["name"] == "clean_text_mapper"
-    assert explain_result.data["name"] == "clean_text_mapper"
+    assert "operators" in list_result.data
+    if list_result.ok:
+        assert isinstance(list_result.data["operators"], list)
+    else:
+        assert list_result.error == "op search unavailable: data_juicer not installed"
+
+    if explain_result.ok:
+        assert explain_result.data["name"] == "clean_text_mapper"
+    else:
+        assert explain_result.error in {
+            "op search unavailable: data_juicer not installed",
+            "operator not found: clean_text_mapper",
+        }
     assert validate_result.data["valid"] is False
+
+
+def test_list_ops_tool_uses_op_searcher_records(monkeypatch) -> None:
+    """List tool should source operator rows from OPSearcher records."""
+    _install_fake_op_searcher(monkeypatch)
+
+    result = list_ops_tool(options={"source": "test"})
+
+    assert result.ok is True
+    assert result.error is None
+    assert [row["name"] for row in result.data["operators"]] == ["alpha_filter", "beta_mapper"]
+    assert result.data["operators"][0]["summary"] == "Filter low-confidence English rows."
+
+
+def test_explain_op_tool_uses_op_searcher_details(monkeypatch) -> None:
+    """Explain tool should return details from OPSearcher metadata."""
+    _install_fake_op_searcher(monkeypatch)
+
+    result = explain_op_tool(operator_name="alpha_filter", options={})
+
+    assert result.ok is True
+    assert result.error is None
+    assert result.data["name"] == "alpha_filter"
+    assert result.data["summary"] == "Filter low-confidence English rows."
+    assert result.data["signature"] == "(threshold: float = 0.8)"
+    assert "threshold" in result.data["param_desc"]
+
+
+def test_explain_op_tool_returns_not_found_for_unknown_operator(monkeypatch) -> None:
+    """Explain tool should return a normalized not-found error."""
+    _install_fake_op_searcher(monkeypatch)
+
+    result = explain_op_tool(operator_name="missing_op", options={})
+
+    assert result.ok is False
+    assert result.error == "operator not found: missing_op"
 
 
 def test_validate_yaml_tool_returns_error_on_contract_validation_failure() -> None:
@@ -224,9 +326,11 @@ def test_router_routes_list_ops_alias_to_tool() -> None:
 
     result = router.route(action="list_ops", payload={"options": {}})
 
-    assert result.ok is True
-    assert result.error is None
-    assert result.data["operators"][0]["name"] == "clean_text_mapper"
+    if result.ok:
+        assert result.error is None
+        assert result.data["operators"]
+    else:
+        assert result.error == "op search unavailable: data_juicer not installed"
 
 
 def test_router_routes_explain_action_to_tool() -> None:
@@ -238,9 +342,14 @@ def test_router_routes_explain_action_to_tool() -> None:
         payload={"operator_name": "clean_text_mapper", "options": {}},
     )
 
-    assert result.ok is True
-    assert result.error is None
-    assert result.data["name"] == "clean_text_mapper"
+    if result.ok:
+        assert result.error is None
+        assert result.data["name"] == "clean_text_mapper"
+    else:
+        assert result.error in {
+            "op search unavailable: data_juicer not installed",
+            "operator not found: clean_text_mapper",
+        }
 
 
 def test_router_routes_explain_op_alias_to_tool() -> None:
@@ -252,9 +361,14 @@ def test_router_routes_explain_op_alias_to_tool() -> None:
         payload={"operator_name": "clean_text_mapper", "options": {}},
     )
 
-    assert result.ok is True
-    assert result.error is None
-    assert result.data["name"] == "clean_text_mapper"
+    if result.ok:
+        assert result.error is None
+        assert result.data["name"] == "clean_text_mapper"
+    else:
+        assert result.error in {
+            "op search unavailable: data_juicer not installed",
+            "operator not found: clean_text_mapper",
+        }
 
 
 def test_router_routes_validate_action_to_tool() -> None:
@@ -425,12 +539,19 @@ def test_list_explain_and_validate_tools_handle_none_options() -> None:
     explain_result = explain_op_tool(operator_name="clean_text_mapper", options=None)
     validate_result = validate_yaml_tool(yaml_text_or_path="process: []", options=None)
 
-    assert list_result.ok is True
-    assert list_result.error is None
+    if list_result.ok:
+        assert list_result.error is None
+    else:
+        assert list_result.error == "op search unavailable: data_juicer not installed"
     assert list_result.data["options"] == {}
 
-    assert explain_result.ok is True
-    assert explain_result.error is None
+    if explain_result.ok:
+        assert explain_result.error is None
+    else:
+        assert explain_result.error in {
+            "op search unavailable: data_juicer not installed",
+            "operator not found: clean_text_mapper",
+        }
     assert explain_result.data["options"] == {}
 
     assert validate_result.ok is False
@@ -468,12 +589,19 @@ def test_list_explain_and_validate_tools_handle_truthy_non_mapping_options() -> 
     explain_result = explain_op_tool(operator_name="clean_text_mapper", options="bad-options")
     validate_result = validate_yaml_tool(yaml_text_or_path="process: []", options="bad-options")
 
-    assert list_result.ok is True
-    assert list_result.error is None
+    if list_result.ok:
+        assert list_result.error is None
+    else:
+        assert list_result.error == "op search unavailable: data_juicer not installed"
     assert list_result.data["options"] == {}
 
-    assert explain_result.ok is True
-    assert explain_result.error is None
+    if explain_result.ok:
+        assert explain_result.error is None
+    else:
+        assert explain_result.error in {
+            "op search unavailable: data_juicer not installed",
+            "operator not found: clean_text_mapper",
+        }
     assert explain_result.data["options"] == {}
 
     assert validate_result.ok is False
