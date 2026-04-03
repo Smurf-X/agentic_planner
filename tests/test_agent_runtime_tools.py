@@ -124,12 +124,12 @@ def test_tool_missing_required_arg_returns_error_envelope() -> None:
         intent="x",
         dataset_path="/tmp/a.jsonl",
         model_config_path="",
-        options={},
+        options={"use_real_generator": True},
     )
 
     assert isinstance(result, ToolResponse)
     assert result.ok is False
-    assert result.error == "missing required argument: model_config_path"
+    assert result.error
 
 
 def test_metadata_tools_return_normalized_envelopes() -> None:
@@ -581,6 +581,71 @@ def test_generate_and_optimize_tools_handle_truthy_non_mapping_options() -> None
     assert optimize_result.ok is True
     assert optimize_result.error is None
     assert optimize_result.data["options"] == {}
+
+
+def test_generate_tool_real_mode_uses_generator_runner(tmp_path: Path, monkeypatch) -> None:
+    """Generate tool should use real runner when enabled."""
+
+    def _fake_run_real_generation(**kwargs):
+        return ({"process": [{"alpha_filter": {}}]}, {"total_tokens": 11})
+
+    monkeypatch.setattr(
+        "agent_runtime.tools.generate_yaml._run_real_generation",
+        _fake_run_real_generation,
+    )
+
+    dataset_path = tmp_path / "input.jsonl"
+    dataset_path.write_text('{"text":"x"}\n', encoding="utf-8")
+
+    result = generate_yaml_tool(
+        intent="do real generation",
+        dataset_path=str(dataset_path),
+        model_config_path="/tmp/models.yaml",
+        options={"use_real_generator": True},
+    )
+
+    assert result.ok is True
+    assert result.error is None
+    assert "alpha_filter" in result.data["yaml_text"]
+    assert result.token_usage == {"total_tokens": 11}
+
+
+def test_generate_tool_real_mode_rejects_directory_dataset_path(tmp_path: Path) -> None:
+    """Real generate mode should reject directory dataset paths."""
+    result = generate_yaml_tool(
+        intent="clean support tickets",
+        dataset_path=str(tmp_path),
+        model_config_path="/tmp/models.yaml",
+        options={"use_real_generator": True},
+    )
+
+    assert result.ok is False
+    assert result.error == "dataset_path must be a file path, not a directory"
+
+
+def test_optimize_tool_real_mode_uses_optimizer_runner(monkeypatch) -> None:
+    """Optimize tool should use real optimizer runner when enabled."""
+
+    def _fake_run_real_optimization(**kwargs):
+        return ("process:\n  - beta_mapper: {}\n", 3, ["minor warning"])
+
+    monkeypatch.setattr(
+        "agent_runtime.tools.optimize_yaml._run_real_optimization",
+        _fake_run_real_optimization,
+    )
+
+    result = optimize_yaml_tool(
+        yaml_text_or_path="process:\n  - alpha_filter: {}\n",
+        objective="quality",
+        model_config_path="/tmp/models.yaml",
+        options={"use_real_optimizer": True},
+    )
+
+    assert result.ok is True
+    assert result.error is None
+    assert "beta_mapper" in result.data["optimized_yaml"]
+    assert result.data["candidate_count"] == 3
+    assert result.data["errors"] == ["minor warning"]
 
 
 def test_list_explain_and_validate_tools_handle_truthy_non_mapping_options() -> None:

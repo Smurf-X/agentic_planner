@@ -50,6 +50,7 @@ output/optimized*.jsonl
 
 # Sensitive files - contains real API keys
 examples/models_real.yaml
+models.yaml
 
 # Environment variables
 .env
