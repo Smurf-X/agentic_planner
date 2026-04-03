@@ -31,6 +31,13 @@ class Router:
             return dict(raw_options)
         return {}
 
+    @staticmethod
+    def _coerce_text(raw_value: Any) -> str:
+        """Coerce values to text while preserving None as empty text."""
+        if raw_value is None:
+            return ""
+        return str(raw_value)
+
     def route(self, action: str, payload: Any) -> ToolResponse:
         """Route actions to tool wrappers and return normalized envelopes."""
         safe_payload = self._coerce_payload(payload)
@@ -44,17 +51,17 @@ class Router:
 
         if action == "generate":
             return generate_yaml_tool(
-                intent=str(safe_payload.get("intent", "")),
-                dataset_path=str(safe_payload.get("dataset_path", "")),
-                model_config_path=str(safe_payload.get("model_config_path", "")),
+                intent=self._coerce_text(safe_payload.get("intent")),
+                dataset_path=self._coerce_text(safe_payload.get("dataset_path")),
+                model_config_path=self._coerce_text(safe_payload.get("model_config_path")),
                 options=safe_options,
             )
 
         if action == "optimize":
             return optimize_yaml_tool(
-                yaml_text_or_path=str(safe_payload.get("yaml_text_or_path", "")),
-                objective=str(safe_payload.get("objective", "")),
-                model_config_path=str(safe_payload.get("model_config_path", "")),
+                yaml_text_or_path=self._coerce_text(safe_payload.get("yaml_text_or_path")),
+                objective=self._coerce_text(safe_payload.get("objective")),
+                model_config_path=self._coerce_text(safe_payload.get("model_config_path")),
                 options=safe_options,
             )
 
@@ -63,13 +70,13 @@ class Router:
 
         if action in {"explain", "explain_op"}:
             return explain_op_tool(
-                operator_name=str(safe_payload.get("operator_name", "")),
+                operator_name=self._coerce_text(safe_payload.get("operator_name")),
                 options=safe_options,
             )
 
         if action == "validate":
             return validate_yaml_tool(
-                yaml_text_or_path=str(safe_payload.get("yaml_text_or_path", "")),
+                yaml_text_or_path=self._coerce_text(safe_payload.get("yaml_text_or_path")),
                 options=safe_options,
             )
 

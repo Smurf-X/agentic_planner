@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import yaml
 
@@ -30,10 +30,12 @@ def _resolve_yaml_input(yaml_text_or_path: str) -> ToolResponse:
     return ok_response(data={"yaml_text": yaml_text})
 
 
-def validate_yaml_tool(yaml_text_or_path: str, options: Dict[str, Any]) -> ToolResponse:
+def validate_yaml_tool(yaml_text_or_path: str, options: Optional[Dict[str, Any]]) -> ToolResponse:
     """Validate YAML structure and return normalized envelope."""
     if not yaml_text_or_path:
         return error_response("missing required argument: yaml_text_or_path")
+
+    safe_options = dict(options or {})
 
     yaml_input = _resolve_yaml_input(yaml_text_or_path=yaml_text_or_path)
     if not yaml_input.ok:
@@ -45,7 +47,7 @@ def validate_yaml_tool(yaml_text_or_path: str, options: Dict[str, Any]) -> ToolR
     except yaml.YAMLError as exc:
         return error_response(
             "invalid yaml",
-            data={"valid": False, "errors": [str(exc)], "options": dict(options)},
+            data={"valid": False, "errors": [str(exc)], "options": safe_options},
         )
 
     errors = validate_executable_config(parsed)
@@ -53,6 +55,6 @@ def validate_yaml_tool(yaml_text_or_path: str, options: Dict[str, Any]) -> ToolR
     if error_message:
         return error_response(
             error_message,
-            data={"valid": False, "errors": errors, "options": dict(options)},
+            data={"valid": False, "errors": errors, "options": safe_options},
         )
-    return ok_response(data={"valid": True, "errors": [], "options": dict(options)})
+    return ok_response(data={"valid": True, "errors": [], "options": safe_options})

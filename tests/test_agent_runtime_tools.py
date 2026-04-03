@@ -323,3 +323,58 @@ def test_generate_and_optimize_tools_handle_none_options() -> None:
     assert optimize_result.error is None
     assert optimize_result.data["options"] == {}
     assert optimize_result.token_usage is None
+
+
+def test_router_generate_with_none_intent_reports_missing_required_argument() -> None:
+    """Router should preserve required-field validation when intent is None."""
+    router = Router()
+
+    result = router.route(
+        action="generate",
+        payload={
+            "intent": None,
+            "dataset_path": "/tmp/a.jsonl",
+            "model_config_path": "/tmp/models.yaml",
+            "options": {},
+        },
+    )
+
+    assert result.ok is False
+    assert result.error == "missing required argument: intent"
+
+
+def test_router_optimize_with_none_objective_reports_missing_required_argument() -> None:
+    """Router should preserve required-field validation when objective is None."""
+    router = Router()
+
+    result = router.route(
+        action="optimize",
+        payload={
+            "yaml_text_or_path": "process:\n  - clean_text_mapper: {}\n",
+            "objective": None,
+            "model_config_path": "/tmp/models.yaml",
+            "options": {},
+        },
+    )
+
+    assert result.ok is False
+    assert result.error == "missing required argument: objective"
+
+
+def test_list_explain_and_validate_tools_handle_none_options() -> None:
+    """Metadata/validation tools should normalize None options to empty mapping."""
+    list_result = list_ops_tool(options=None)
+    explain_result = explain_op_tool(operator_name="clean_text_mapper", options=None)
+    validate_result = validate_yaml_tool(yaml_text_or_path="process: []", options=None)
+
+    assert list_result.ok is True
+    assert list_result.error is None
+    assert list_result.data["options"] == {}
+
+    assert explain_result.ok is True
+    assert explain_result.error is None
+    assert explain_result.data["options"] == {}
+
+    assert validate_result.ok is False
+    assert validate_result.error == "validation failed"
+    assert validate_result.data["options"] == {}
