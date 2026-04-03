@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Agent runtime service entrypoints."""
 
+from __future__ import annotations
+
 from typing import Dict
 from uuid import uuid4
 

@@ -65,7 +65,7 @@ Repository = "https://github.com/modelscope/data-juicer"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["agentic_planner*"]
+include = ["agentic_planner*", "agent_runtime*"]
 
 [tool.setuptools.package-data]
 agentic_planner = ["py.typed"]

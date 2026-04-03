@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Typed API response schemas for runtime tools."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
