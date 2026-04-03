@@ -9,7 +9,7 @@ from agent_runtime.api.schemas import ToolResponse
 from agent_runtime.tools.envelope import ok_response
 
 
-def list_ops_tool(options: Optional[Dict[str, Any]]) -> ToolResponse:
+def list_ops_tool(options: Optional[Mapping[str, Any]]) -> ToolResponse:
     """Return deterministic operator metadata list."""
     safe_options = dict(options) if isinstance(options, Mapping) else {}
     operators: List[Dict[str, Any]] = [

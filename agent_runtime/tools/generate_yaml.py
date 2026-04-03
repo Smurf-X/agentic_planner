@@ -13,7 +13,7 @@ def generate_yaml_tool(
     intent: str,
     dataset_path: str,
     model_config_path: str,
-    options: Optional[Dict[str, Any]],
+    options: Optional[Mapping[str, Any]],
 ) -> ToolResponse:
     """Return deterministic generated YAML payload in a normalized envelope."""
     if not intent:

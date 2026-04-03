@@ -9,7 +9,7 @@ from agent_runtime.api.schemas import ToolResponse
 from agent_runtime.tools.envelope import error_response, ok_response
 
 
-def explain_op_tool(operator_name: str, options: Optional[Dict[str, Any]]) -> ToolResponse:
+def explain_op_tool(operator_name: str, options: Optional[Mapping[str, Any]]) -> ToolResponse:
     """Return deterministic explanation for a named operator."""
     if not operator_name:
         return error_response("missing required argument: operator_name")

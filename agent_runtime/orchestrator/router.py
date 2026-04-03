@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Union
 
 from agent_runtime.api.schemas import ToolResponse
 from agent_runtime.tools.explain_op import explain_op_tool
@@ -32,11 +32,21 @@ class Router:
         return {}
 
     @staticmethod
-    def _coerce_text(raw_value: Any) -> str:
-        """Coerce values to text while preserving None as empty text."""
+    def _coerce_required_text(payload: Mapping[str, Any], field: str) -> Union[str, ToolResponse]:
+        """Normalize required text fields while preserving explicit type errors."""
+        raw_value = payload.get(field)
         if raw_value is None:
             return ""
-        return str(raw_value)
+        if isinstance(raw_value, str):
+            return raw_value
+        return error_response(
+            f"invalid type for {field}",
+            data={
+                "field": field,
+                "expected_type": "str",
+                "actual_type": type(raw_value).__name__,
+            },
+        )
 
     def route(self, action: str, payload: Any) -> ToolResponse:
         """Route actions to tool wrappers and return normalized envelopes."""
@@ -50,18 +60,36 @@ class Router:
         safe_options = self._coerce_options(safe_payload.get("options"))
 
         if action == "generate":
+            intent = self._coerce_required_text(safe_payload, "intent")
+            if isinstance(intent, ToolResponse):
+                return intent
+            dataset_path = self._coerce_required_text(safe_payload, "dataset_path")
+            if isinstance(dataset_path, ToolResponse):
+                return dataset_path
+            model_config_path = self._coerce_required_text(safe_payload, "model_config_path")
+            if isinstance(model_config_path, ToolResponse):
+                return model_config_path
             return generate_yaml_tool(
-                intent=self._coerce_text(safe_payload.get("intent")),
-                dataset_path=self._coerce_text(safe_payload.get("dataset_path")),
-                model_config_path=self._coerce_text(safe_payload.get("model_config_path")),
+                intent=intent,
+                dataset_path=dataset_path,
+                model_config_path=model_config_path,
                 options=safe_options,
             )
 
         if action == "optimize":
+            yaml_text_or_path = self._coerce_required_text(safe_payload, "yaml_text_or_path")
+            if isinstance(yaml_text_or_path, ToolResponse):
+                return yaml_text_or_path
+            objective = self._coerce_required_text(safe_payload, "objective")
+            if isinstance(objective, ToolResponse):
+                return objective
+            model_config_path = self._coerce_required_text(safe_payload, "model_config_path")
+            if isinstance(model_config_path, ToolResponse):
+                return model_config_path
             return optimize_yaml_tool(
-                yaml_text_or_path=self._coerce_text(safe_payload.get("yaml_text_or_path")),
-                objective=self._coerce_text(safe_payload.get("objective")),
-                model_config_path=self._coerce_text(safe_payload.get("model_config_path")),
+                yaml_text_or_path=yaml_text_or_path,
+                objective=objective,
+                model_config_path=model_config_path,
                 options=safe_options,
             )
 
@@ -69,14 +97,20 @@ class Router:
             return list_ops_tool(options=safe_options)
 
         if action in {"explain", "explain_op"}:
+            operator_name = self._coerce_required_text(safe_payload, "operator_name")
+            if isinstance(operator_name, ToolResponse):
+                return operator_name
             return explain_op_tool(
-                operator_name=self._coerce_text(safe_payload.get("operator_name")),
+                operator_name=operator_name,
                 options=safe_options,
             )
 
         if action == "validate":
+            yaml_text_or_path = self._coerce_required_text(safe_payload, "yaml_text_or_path")
+            if isinstance(yaml_text_or_path, ToolResponse):
+                return yaml_text_or_path
             return validate_yaml_tool(
-                yaml_text_or_path=self._coerce_text(safe_payload.get("yaml_text_or_path")),
+                yaml_text_or_path=yaml_text_or_path,
                 options=safe_options,
             )
 

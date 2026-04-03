@@ -361,6 +361,64 @@ def test_router_optimize_with_none_objective_reports_missing_required_argument()
     assert result.error == "missing required argument: objective"
 
 
+def test_router_required_text_fields_reject_non_string_values() -> None:
+    """Router should return normalized type errors for non-string text fields."""
+    router = Router()
+
+    generate_result = router.route(
+        action="generate",
+        payload={
+            "intent": 123,
+            "dataset_path": "/tmp/a.jsonl",
+            "model_config_path": "/tmp/models.yaml",
+            "options": {},
+        },
+    )
+    optimize_result = router.route(
+        action="optimize",
+        payload={
+            "yaml_text_or_path": "process:\n  - clean_text_mapper: {}\n",
+            "objective": ["quality"],
+            "model_config_path": "/tmp/models.yaml",
+            "options": {},
+        },
+    )
+    explain_result = router.route(
+        action="explain",
+        payload={"operator_name": {"name": "clean_text_mapper"}, "options": {}},
+    )
+
+    assert generate_result.ok is False
+    assert generate_result.error == "invalid type for intent"
+
+    assert optimize_result.ok is False
+    assert optimize_result.error == "invalid type for objective"
+
+    assert explain_result.ok is False
+    assert explain_result.error == "invalid type for operator_name"
+
+
+def test_optimize_and_validate_tools_resolve_yaml_file_inputs_consistently(tmp_path: Path) -> None:
+    """Optimize and validate tools should both resolve YAML path inputs."""
+    yaml_path = tmp_path / "shared.yaml"
+    yaml_path.write_text("process:\n  - clean_text_mapper: {}\n", encoding="utf-8")
+
+    optimize_result = optimize_yaml_tool(
+        yaml_text_or_path=str(yaml_path),
+        objective="quality",
+        model_config_path="/tmp/models.yaml",
+        options={},
+    )
+    validate_result = validate_yaml_tool(yaml_text_or_path=str(yaml_path), options={})
+
+    assert optimize_result.ok is True
+    assert optimize_result.error is None
+    assert optimize_result.data["optimized_yaml"] == "process:\n  - clean_text_mapper: {}\n"
+
+    assert validate_result.ok is False
+    assert validate_result.error == "validation failed"
+
+
 def test_list_explain_and_validate_tools_handle_none_options() -> None:
     """Metadata/validation tools should normalize None options to empty mapping."""
     list_result = list_ops_tool(options=None)
