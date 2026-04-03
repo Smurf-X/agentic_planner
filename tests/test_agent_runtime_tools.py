@@ -378,3 +378,46 @@ def test_list_explain_and_validate_tools_handle_none_options() -> None:
     assert validate_result.ok is False
     assert validate_result.error == "validation failed"
     assert validate_result.data["options"] == {}
+
+
+def test_generate_and_optimize_tools_handle_truthy_non_mapping_options() -> None:
+    """Generate/optimize tools should normalize truthy non-mapping options."""
+    generate_result = generate_yaml_tool(
+        intent="clean text",
+        dataset_path="/tmp/a.jsonl",
+        model_config_path="/tmp/models.yaml",
+        options="bad-options",
+    )
+    optimize_result = optimize_yaml_tool(
+        yaml_text_or_path="process:\n  - clean_text_mapper: {}\n",
+        objective="cost",
+        model_config_path="/tmp/models.yaml",
+        options="bad-options",
+    )
+
+    assert generate_result.ok is True
+    assert generate_result.error is None
+    assert generate_result.data["options"] == {}
+
+    assert optimize_result.ok is True
+    assert optimize_result.error is None
+    assert optimize_result.data["options"] == {}
+
+
+def test_list_explain_and_validate_tools_handle_truthy_non_mapping_options() -> None:
+    """Metadata/validation tools should normalize truthy non-mapping options."""
+    list_result = list_ops_tool(options="bad-options")
+    explain_result = explain_op_tool(operator_name="clean_text_mapper", options="bad-options")
+    validate_result = validate_yaml_tool(yaml_text_or_path="process: []", options="bad-options")
+
+    assert list_result.ok is True
+    assert list_result.error is None
+    assert list_result.data["options"] == {}
+
+    assert explain_result.ok is True
+    assert explain_result.error is None
+    assert explain_result.data["options"] == {}
+
+    assert validate_result.ok is False
+    assert validate_result.error == "validation failed"
+    assert validate_result.data["options"] == {}

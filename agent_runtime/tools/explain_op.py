@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
 from agent_runtime.api.schemas import ToolResponse
 from agent_runtime.tools.envelope import error_response, ok_response
@@ -14,7 +14,7 @@ def explain_op_tool(operator_name: str, options: Optional[Dict[str, Any]]) -> To
     if not operator_name:
         return error_response("missing required argument: operator_name")
 
-    safe_options = dict(options or {})
+    safe_options = dict(options) if isinstance(options, Mapping) else {}
 
     explanation = {
         "name": operator_name,

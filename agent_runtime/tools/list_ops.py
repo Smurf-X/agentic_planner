@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from agent_runtime.api.schemas import ToolResponse
 from agent_runtime.tools.envelope import ok_response
@@ -11,7 +11,7 @@ from agent_runtime.tools.envelope import ok_response
 
 def list_ops_tool(options: Optional[Dict[str, Any]]) -> ToolResponse:
     """Return deterministic operator metadata list."""
-    safe_options = dict(options or {})
+    safe_options = dict(options) if isinstance(options, Mapping) else {}
     operators: List[Dict[str, Any]] = [
         {
             "name": "clean_text_mapper",

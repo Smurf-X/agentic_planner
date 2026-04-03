@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
 from agent_runtime.api.schemas import ToolResponse
 from agent_runtime.tools.envelope import error_response, ok_response
@@ -23,7 +23,7 @@ def generate_yaml_tool(
     if not model_config_path:
         return error_response("missing required argument: model_config_path")
 
-    safe_options = dict(options or {})
+    safe_options = dict(options) if isinstance(options, Mapping) else {}
     yaml_text = "process:\n  - clean_text_mapper: {}\n"
     data: Dict[str, Any] = {
         "yaml_text": yaml_text,

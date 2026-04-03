@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
 from agent_runtime.api.schemas import ToolResponse
 from agent_runtime.tools.envelope import error_response, ok_response
@@ -45,7 +45,7 @@ def optimize_yaml_tool(
     if not yaml_input.ok:
         return yaml_input
     optimized_yaml = str(yaml_input.data["yaml_text"])
-    safe_options = dict(options or {})
+    safe_options = dict(options) if isinstance(options, Mapping) else {}
 
     data: Dict[str, Any] = {
         "optimized_yaml": optimized_yaml,

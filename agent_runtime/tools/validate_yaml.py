@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
 import yaml
 
@@ -35,7 +35,7 @@ def validate_yaml_tool(yaml_text_or_path: str, options: Optional[Dict[str, Any]]
     if not yaml_text_or_path:
         return error_response("missing required argument: yaml_text_or_path")
 
-    safe_options = dict(options or {})
+    safe_options = dict(options) if isinstance(options, Mapping) else {}
 
     yaml_input = _resolve_yaml_input(yaml_text_or_path=yaml_text_or_path)
     if not yaml_input.ok:
