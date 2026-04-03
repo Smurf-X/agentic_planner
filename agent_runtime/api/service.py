@@ -51,6 +51,8 @@ class AgentRuntimeService:
             restored = self._persistence.load(session_id)
         except FileNotFoundError:
             return ToolResponse(ok=False, error=f"session not found: {session_id}")
+        except ValueError:
+            return ToolResponse(ok=False, error=f"invalid session snapshot: {session_id}")
 
         self._sessions[session_id] = restored
         return ToolResponse(ok=True, data=restored.to_dict())

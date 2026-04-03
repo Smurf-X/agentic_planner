@@ -7,6 +7,27 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 
+def _coerce_str_or_default(value: Any, default: str = "") -> str:
+    """Return string values or a safe default."""
+    if isinstance(value, str):
+        return value
+    return default
+
+
+def _coerce_optional_str(value: Any) -> Optional[str]:
+    """Return a string value when valid, else None."""
+    if isinstance(value, str):
+        return value
+    return None
+
+
+def _coerce_dict_list(value: Any) -> List[Dict[str, Any]]:
+    """Keep only dictionary entries from list-like payloads."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
 @dataclass
 class SessionState:
     """In-memory session state for runtime interactions."""
@@ -36,13 +57,16 @@ class SessionState:
     @classmethod
     def from_dict(cls, payload: Dict[str, Any]) -> "SessionState":
         """Build session state from persisted payload."""
+        if not isinstance(payload, dict):
+            raise ValueError("session snapshot payload must be a mapping")
+
         return cls(
-            session_id=str(payload.get("session_id", "")),
-            current_yaml=str(payload.get("current_yaml", "")),
-            last_generated_yaml=str(payload.get("last_generated_yaml", "")),
-            last_optimized_candidates=list(payload.get("last_optimized_candidates", [])),
-            objective=payload.get("objective"),
-            dataset_path=payload.get("dataset_path"),
-            model_config_path=payload.get("model_config_path"),
-            event_history=list(payload.get("event_history", [])),
+            session_id=_coerce_str_or_default(payload.get("session_id", "")),
+            current_yaml=_coerce_str_or_default(payload.get("current_yaml", "")),
+            last_generated_yaml=_coerce_str_or_default(payload.get("last_generated_yaml", "")),
+            last_optimized_candidates=_coerce_dict_list(payload.get("last_optimized_candidates", [])),
+            objective=_coerce_optional_str(payload.get("objective")),
+            dataset_path=_coerce_optional_str(payload.get("dataset_path")),
+            model_config_path=_coerce_optional_str(payload.get("model_config_path")),
+            event_history=_coerce_dict_list(payload.get("event_history", [])),
         )

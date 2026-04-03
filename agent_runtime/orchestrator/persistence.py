@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Optional, Union
 
@@ -13,6 +14,11 @@ from agent_runtime.orchestrator.session_state import SessionState
 class SessionPersistence:
     """Persist session state to local JSON files."""
 
+    _SESSION_ID_PATTERN = re.compile(
+        r"^(?:[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$",
+        re.IGNORECASE,
+    )
+
     def __init__(self, storage_dir: Optional[Union[str, Path]] = None) -> None:
         """Initialize storage directory for session snapshots."""
         if storage_dir is None:
@@ -20,10 +26,22 @@ class SessionPersistence:
         else:
             self._storage_dir = Path(storage_dir)
         self._storage_dir.mkdir(parents=True, exist_ok=True)
+        self._resolved_storage_dir = self._storage_dir.resolve()
+
+    def _validate_session_id(self, session_id: str) -> None:
+        """Validate allowed session id format."""
+        if self._SESSION_ID_PATTERN.fullmatch(session_id) is None:
+            raise ValueError("invalid session id")
 
     def _session_path(self, session_id: str) -> Path:
         """Build deterministic path for one session id."""
-        return self._storage_dir / f"{session_id}.json"
+        self._validate_session_id(session_id)
+        path = (self._storage_dir / f"{session_id}.json").resolve()
+        try:
+            path.relative_to(self._resolved_storage_dir)
+        except ValueError as exc:
+            raise ValueError("session path escapes storage directory") from exc
+        return path
 
     def save(self, state: SessionState) -> str:
         """Save one session snapshot and return the path."""
