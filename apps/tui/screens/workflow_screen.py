@@ -4,9 +4,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from agent_runtime.api.service import AgentRuntimeService
+from apps.tui.runtime_boundary import (
+    RuntimeResponse,
+    RuntimeServiceLike,
+    create_runtime_service,
+    dispatch_action,
+)
 
 
 @dataclass
@@ -32,32 +37,13 @@ class WorkflowFormData:
         return missing
 
 
-@dataclass
-class LocalResponse:
-    """Fallback response contract for unsupported service calls."""
-
-    ok: bool
-    data: Dict[str, Any]
-    error: str = ""
-
-
 class WorkflowScreen:
     """Workflow handlers that call runtime service through one boundary."""
 
-    def __init__(self, service: Any = None) -> None:
-        self.service = service or AgentRuntimeService()
+    def __init__(self, service: Optional[RuntimeServiceLike] = None) -> None:
+        self.service: RuntimeServiceLike = service or create_runtime_service()
 
-    def _dispatch(self, action: str, payload: Dict[str, Any]) -> Any:
-        """Dispatch action via runtime service with compatibility fallbacks."""
-        if hasattr(self.service, "dispatch"):
-            return self.service.dispatch(action=action, payload=payload)
-        if hasattr(self.service, "route"):
-            return self.service.route(action=action, payload=payload)
-        if hasattr(self.service, "router") and hasattr(self.service.router, "route"):
-            return self.service.router.route(action=action, payload=payload)
-        return LocalResponse(ok=False, data={}, error="service does not support dispatch")
-
-    def submit_generate(self, form: WorkflowFormData) -> Any:
+    def submit_generate(self, form: WorkflowFormData) -> RuntimeResponse:
         """Run generate action using structured workflow form inputs."""
         payload = {
             "intent": form.task_description,
@@ -65,9 +51,9 @@ class WorkflowScreen:
             "model_config_path": form.model_config_path,
             "options": {"route": "generate", "objective": form.optimization_preference},
         }
-        return self._dispatch(action="generate", payload=payload)
+        return dispatch_action(self.service, action="generate", payload=payload)
 
-    def submit_optimize(self, form: WorkflowFormData, yaml_text: str) -> Any:
+    def submit_optimize(self, form: WorkflowFormData, yaml_text: str) -> RuntimeResponse:
         """Run optimize action using workflow objective and generated YAML."""
         payload = {
             "yaml_text_or_path": yaml_text,
@@ -75,11 +61,12 @@ class WorkflowScreen:
             "model_config_path": form.model_config_path,
             "options": {"route": "optimize", "dataset_path": form.dataset_path},
         }
-        return self._dispatch(action="optimize", payload=payload)
+        return dispatch_action(self.service, action="optimize", payload=payload)
 
-    def validate_yaml(self, yaml_text_or_path: str) -> Any:
+    def validate_yaml(self, yaml_text_or_path: str) -> RuntimeResponse:
         """Run validate action for intermediate YAML checks."""
-        return self._dispatch(
+        return dispatch_action(
+            self.service,
             action="validate",
             payload={"yaml_text_or_path": yaml_text_or_path, "options": {"route": "validate"}},
         )

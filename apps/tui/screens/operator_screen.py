@@ -3,43 +3,30 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from agent_runtime.api.service import AgentRuntimeService
-
-
-@dataclass
-class LocalResponse:
-    """Fallback response contract for unsupported service calls."""
-
-    ok: bool
-    data: Dict[str, Any]
-    error: str = ""
+from apps.tui.runtime_boundary import (
+    RuntimeResponse,
+    RuntimeServiceLike,
+    create_runtime_service,
+    dispatch_action,
+)
 
 
 class OperatorScreen:
     """Operator route handlers using runtime service boundary."""
 
-    def __init__(self, service: Any = None) -> None:
-        self.service = service or AgentRuntimeService()
+    def __init__(self, service: Optional[RuntimeServiceLike] = None) -> None:
+        self.service: RuntimeServiceLike = service or create_runtime_service()
 
-    def _dispatch(self, action: str, payload: Dict[str, Any]) -> Any:
-        if hasattr(self.service, "dispatch"):
-            return self.service.dispatch(action=action, payload=payload)
-        if hasattr(self.service, "route"):
-            return self.service.route(action=action, payload=payload)
-        if hasattr(self.service, "router") and hasattr(self.service.router, "route"):
-            return self.service.router.route(action=action, payload=payload)
-        return LocalResponse(ok=False, data={}, error="service does not support dispatch")
-
-    def list_operators(self) -> Any:
+    def list_operators(self) -> RuntimeResponse:
         """Return operator catalog from runtime service."""
-        return self._dispatch(action="list", payload={"options": {"route": "operator"}})
+        return dispatch_action(self.service, action="list", payload={"options": {"route": "operator"}})
 
-    def explain_operator(self, operator_name: str) -> Any:
+    def explain_operator(self, operator_name: str) -> RuntimeResponse:
         """Return details for one operator."""
-        return self._dispatch(
+        return dispatch_action(
+            self.service,
             action="explain",
             payload={"operator_name": operator_name, "options": {"route": "operator"}},
         )

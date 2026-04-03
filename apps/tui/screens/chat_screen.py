@@ -4,9 +4,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from agent_runtime.api.service import AgentRuntimeService
+from apps.tui.runtime_boundary import (
+    RuntimeResponse,
+    RuntimeServiceLike,
+    create_runtime_service,
+    dispatch_action,
+)
 
 
 @dataclass
@@ -17,20 +22,11 @@ class ChatRoute:
     payload: Dict[str, Any]
 
 
-@dataclass
-class LocalResponse:
-    """Fallback response contract for unsupported service calls."""
-
-    ok: bool
-    data: Dict[str, Any]
-    error: str = ""
-
-
 class ChatScreen:
     """Simple parser and dispatch helpers for chat commands."""
 
-    def __init__(self, service: Any = None) -> None:
-        self.service = service or AgentRuntimeService()
+    def __init__(self, service: Optional[RuntimeServiceLike] = None) -> None:
+        self.service: RuntimeServiceLike = service or create_runtime_service()
 
     def route_message(self, message: str) -> ChatRoute:
         """Map a message to a deterministic runtime action."""
@@ -58,16 +54,7 @@ class ChatScreen:
             },
         )
 
-    def _dispatch(self, action: str, payload: Dict[str, Any]) -> Any:
-        if hasattr(self.service, "dispatch"):
-            return self.service.dispatch(action=action, payload=payload)
-        if hasattr(self.service, "route"):
-            return self.service.route(action=action, payload=payload)
-        if hasattr(self.service, "router") and hasattr(self.service.router, "route"):
-            return self.service.router.route(action=action, payload=payload)
-        return LocalResponse(ok=False, data={}, error="service does not support dispatch")
-
-    def submit_message(self, message: str) -> Any:
+    def submit_message(self, message: str) -> RuntimeResponse:
         """Route and dispatch a chat message through runtime service."""
         route = self.route_message(message)
-        return self._dispatch(action=route.action, payload=route.payload)
+        return dispatch_action(self.service, action=route.action, payload=route.payload)

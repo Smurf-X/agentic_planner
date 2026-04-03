@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from agent_runtime.api.service import AgentRuntimeService
+from apps.tui.runtime_boundary import RuntimeServiceLike, create_runtime_service
 
 from apps.tui.screens.chat_screen import ChatScreen
 from apps.tui.screens.export_screen import ExportScreen
@@ -25,8 +25,8 @@ class AppRoute:
 class AgentPlannerTUI:
     """Minimal TUI shell that exposes MVP menu routes."""
 
-    def __init__(self, service: Any = None) -> None:
-        self.service = service or AgentRuntimeService()
+    def __init__(self, service: Optional[RuntimeServiceLike] = None) -> None:
+        self.service: RuntimeServiceLike = service or create_runtime_service()
         self._routes: Dict[str, AppRoute] = {
             "generate": AppRoute(name="generate", screen=WorkflowScreen),
             "optimize": AppRoute(name="optimize", screen=WorkflowScreen),
