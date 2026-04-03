@@ -11,7 +11,7 @@ from agent_runtime.api.schemas import ToolResponse
 from agent_runtime.orchestrator.persistence import SessionPersistence
 from agent_runtime.orchestrator.router import Router
 from agent_runtime.orchestrator.session_state import SessionState
-from agent_runtime.telemetry.logger import EventLogger
+from agent_runtime.telemetry.logger import EventLogger, RuntimeEventInput
 
 
 class AgentRuntimeService:
@@ -41,9 +41,18 @@ class AgentRuntimeService:
     @staticmethod
     def _summarize_response(response: ToolResponse) -> Dict[str, Any]:
         """Create deterministic response summary for telemetry."""
+        if isinstance(response.data, dict):
+            data_summary: Dict[str, Any] = {
+                "data_keys": sorted(response.data.keys()),
+            }
+        else:
+            data_summary = {
+                "data_type": type(response.data).__name__,
+            }
+
         return {
             "ok": response.ok,
-            "data_keys": sorted(response.data.keys()),
+            **data_summary,
         }
 
     def _log_runtime_event(
@@ -55,17 +64,19 @@ class AgentRuntimeService:
         started_at: float,
     ) -> None:
         """Append one runtime event for a service action."""
-        self._event_logger.log_event(
-            {
-                "timestamp": self._event_logger.now_timestamp(),
-                "tool_name": tool_name,
-                "input_summary": input_summary,
-                "result_summary": self._summarize_response(response),
-                "duration_ms": self._event_logger.duration_ms(started_at),
-                "token_usage": response.token_usage,
-                "error": response.error,
-            }
-        )
+        event: RuntimeEventInput = {
+            "timestamp": self._event_logger.now_timestamp(),
+            "tool_name": tool_name,
+            "input_summary": input_summary,
+            "result_summary": self._summarize_response(response),
+            "duration_ms": self._event_logger.duration_ms(started_at),
+            "token_usage": response.token_usage,
+            "error": response.error,
+        }
+        try:
+            self._event_logger.log_event(event)
+        except (OSError, TypeError, ValueError):
+            return
 
     def create_session(self) -> ToolResponse:
         """Create a new runtime session and return its identifier."""

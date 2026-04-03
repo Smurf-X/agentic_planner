@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict
 
+from agent_runtime.api.schemas import ToolResponse
 from agent_runtime.api.service import AgentRuntimeService
 
 
@@ -48,3 +49,14 @@ def test_event_contains_required_schema_fields(tmp_path: Path) -> None:
     assert set(event.keys()) == REQUIRED_EVENT_FIELDS
     assert isinstance(event["duration_ms"], int)
     assert event["duration_ms"] >= 0
+
+
+def test_service_response_summary_handles_non_mapping_data() -> None:
+    """Response summary should not assume ToolResponse.data is a mapping."""
+    response = ToolResponse(ok=True, data={})
+    response.data = ["not", "a", "mapping"]
+
+    summary = AgentRuntimeService._summarize_response(response)
+
+    assert summary["ok"] is True
+    assert summary["data_type"] == "list"

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from agent_runtime.api.service import AgentRuntimeService
+from agent_runtime.telemetry.logger import EventLogger
 
 
 def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
@@ -43,3 +44,33 @@ def test_service_emits_event_log_for_dispatch(tmp_path: Path) -> None:
     events = _read_jsonl(tmp_path / "events.jsonl")
     assert len(events) == 1
     assert events[0]["tool_name"] == "dispatch:list"
+
+
+def test_logger_write_failure_does_not_raise(tmp_path: Path, monkeypatch) -> None:
+    """Logger write errors should be swallowed as best-effort telemetry."""
+    logger = EventLogger(log_dir=tmp_path)
+
+    def _raise_oserror(*args: Any, **kwargs: Any) -> None:  # noqa: ARG001
+        raise OSError("mock write failure")
+
+    monkeypatch.setattr(Path, "open", _raise_oserror)
+
+    logger.log_event({"tool_name": "dispatch:list"})
+
+
+def test_service_dispatch_returns_response_when_logger_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Dispatch should still return routed response when telemetry logging fails."""
+    service = AgentRuntimeService(log_dir=tmp_path)
+
+    def _raise_oserror(event: Dict[str, Any]) -> None:  # noqa: ARG001
+        raise OSError("mock telemetry failure")
+
+    monkeypatch.setattr(service._event_logger, "log_event", _raise_oserror)
+
+    response = service.dispatch(action="list", payload={"options": {}})
+
+    assert response.ok is True
+    assert response.error is None

@@ -7,7 +7,31 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, TypedDict, Union
+
+
+class RuntimeEvent(TypedDict):
+    """Strongly-typed runtime telemetry event schema."""
+
+    timestamp: str
+    tool_name: str
+    input_summary: Dict[str, Any]
+    result_summary: Dict[str, Any]
+    duration_ms: int
+    token_usage: Optional[Dict[str, Any]]
+    error: Optional[str]
+
+
+class RuntimeEventInput(TypedDict, total=False):
+    """Runtime event payload where fields may be omitted for defaults."""
+
+    timestamp: str
+    tool_name: str
+    input_summary: Dict[str, Any]
+    result_summary: Dict[str, Any]
+    duration_ms: int
+    token_usage: Optional[Dict[str, Any]]
+    error: Optional[str]
 
 
 class EventLogger:
@@ -52,7 +76,7 @@ class EventLogger:
         """Return the current JSONL file path."""
         return self._log_path
 
-    def _normalize_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize_event(self, event: RuntimeEventInput) -> RuntimeEvent:
         """Ensure required event schema keys exist."""
         normalized: Dict[str, Any] = dict(event)
         if "timestamp" not in normalized:
@@ -70,11 +94,22 @@ class EventLogger:
         if "error" not in normalized:
             normalized["error"] = None
 
-        return {field: normalized[field] for field in self._REQUIRED_FIELDS}
+        return {
+            "timestamp": str(normalized["timestamp"]),
+            "tool_name": str(normalized["tool_name"]),
+            "input_summary": dict(normalized["input_summary"]),
+            "result_summary": dict(normalized["result_summary"]),
+            "duration_ms": int(normalized["duration_ms"]),
+            "token_usage": normalized["token_usage"],
+            "error": normalized["error"],
+        }
 
-    def log_event(self, event: Dict[str, Any]) -> None:
+    def log_event(self, event: RuntimeEventInput) -> None:
         """Append one normalized event to the JSONL stream."""
-        normalized_event = self._normalize_event(event)
-        with self._log_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(normalized_event, sort_keys=True))
-            handle.write("\n")
+        try:
+            normalized_event = self._normalize_event(event)
+            with self._log_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(normalized_event, sort_keys=True))
+                handle.write("\n")
+        except (OSError, TypeError, ValueError):
+            return
