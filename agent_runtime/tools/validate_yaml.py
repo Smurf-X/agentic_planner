@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from agentic_planner.contracts.recipe import validate_executable_config
 from agent_runtime.api.schemas import ToolResponse
