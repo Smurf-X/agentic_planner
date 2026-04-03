@@ -6,6 +6,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+PREVIEW_CHANGED_MESSAGE = "Preview before overwrite: YAML content will be replaced."
+PREVIEW_UNCHANGED_MESSAGE = "Preview before overwrite: no changes detected."
+
+
 @dataclass
 class OverwritePreview:
     """Placeholder overwrite preview state."""
@@ -20,10 +24,7 @@ class ExportScreen:
     def preview_before_overwrite(self, existing_yaml: str, next_yaml: str) -> OverwritePreview:
         """Return deterministic overwrite preview text for UI wiring."""
         changed = existing_yaml != next_yaml
-        if changed:
-            message = "Preview before overwrite: YAML content will be replaced."
-        else:
-            message = "Preview before overwrite: no changes detected."
+        message = PREVIEW_CHANGED_MESSAGE if changed else PREVIEW_UNCHANGED_MESSAGE
         return OverwritePreview(changed=changed, message=message)
 
     def copy_yaml_once(self, yaml_text: str) -> str:
