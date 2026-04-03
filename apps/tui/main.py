@@ -6,6 +6,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+try:
+    from textual.app import App as TextualApp
+except ImportError:  # pragma: no cover - test environment may not install textual
+    class TextualApp:  # type: ignore[no-redef]
+        """Fallback base app for environments without textual installed."""
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
 from apps.tui.runtime_boundary import RuntimeServiceLike, create_runtime_service
 
 from apps.tui.screens.chat_screen import ChatScreen
@@ -22,10 +31,11 @@ class AppRoute:
     screen: Any
 
 
-class AgentPlannerTUI:
+class AgentPlannerTUI(TextualApp):
     """Minimal TUI shell that exposes MVP menu routes."""
 
     def __init__(self, service: Optional[RuntimeServiceLike] = None) -> None:
+        super().__init__()
         self.service: RuntimeServiceLike = service or create_runtime_service()
         self._routes: Dict[str, AppRoute] = {
             "generate": AppRoute(name="generate", screen=WorkflowScreen),

@@ -3,17 +3,35 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Dict, Protocol, Union, cast, runtime_checkable
 
-from agent_runtime.api.schemas import ToolResponse
 from agent_runtime.api.service import AgentRuntimeService
+
+
+@runtime_checkable
+class RuntimeResponse(Protocol):
+    """Minimal response envelope expected by TUI screens."""
+
+    ok: bool
+    data: Dict[str, Any]
+    error: str
+
+
+@dataclass
+class BoundaryErrorResponse:
+    """Fallback response when service lacks compatible dispatch entrypoints."""
+
+    ok: bool
+    data: Dict[str, Any]
+    error: str = ""
 
 
 @runtime_checkable
 class RuntimeDispatchService(Protocol):
     """Runtime service shape exposing dispatch."""
 
-    def dispatch(self, action: str, payload: Dict[str, Any]) -> ToolResponse:
+    def dispatch(self, action: str, payload: Dict[str, Any]) -> RuntimeResponse:
         """Dispatch one action payload through runtime tooling."""
 
 
@@ -21,7 +39,7 @@ class RuntimeDispatchService(Protocol):
 class RuntimeRouteService(Protocol):
     """Legacy runtime service shape exposing route."""
 
-    def route(self, action: str, payload: Dict[str, Any]) -> ToolResponse:
+    def route(self, action: str, payload: Dict[str, Any]) -> RuntimeResponse:
         """Route one action payload through runtime tooling."""
 
 
@@ -29,7 +47,7 @@ class RuntimeRouteService(Protocol):
 class RuntimeRouter(Protocol):
     """Router shape containing route() used by compatibility wrappers."""
 
-    def route(self, action: str, payload: Dict[str, Any]) -> ToolResponse:
+    def route(self, action: str, payload: Dict[str, Any]) -> RuntimeResponse:
         """Route one action payload through runtime tooling."""
 
 
@@ -41,7 +59,6 @@ class RuntimeRouterContainer(Protocol):
 
 
 RuntimeServiceLike = Union[RuntimeDispatchService, RuntimeRouteService, RuntimeRouterContainer]
-RuntimeResponse = ToolResponse
 
 
 def create_runtime_service() -> RuntimeDispatchService:
@@ -54,20 +71,20 @@ def dispatch_action(
     *,
     action: str,
     payload: Dict[str, Any],
-) -> ToolResponse:
+) -> RuntimeResponse:
     """Dispatch runtime action through shared boundary compatibility logic."""
     dispatch = getattr(service, "dispatch", None)
     if callable(dispatch):
-        return cast(ToolResponse, dispatch(action=action, payload=payload))
+        return cast(RuntimeResponse, dispatch(action=action, payload=payload))
 
     route = getattr(service, "route", None)
     if callable(route):
-        return cast(ToolResponse, route(action=action, payload=payload))
+        return cast(RuntimeResponse, route(action=action, payload=payload))
 
     router = getattr(service, "router", None)
     if router is not None:
         router_route = getattr(router, "route", None)
         if callable(router_route):
-            return cast(ToolResponse, router_route(action=action, payload=payload))
+            return cast(RuntimeResponse, router_route(action=action, payload=payload))
 
-    return ToolResponse(ok=False, data={}, error="service does not support dispatch")
+    return BoundaryErrorResponse(ok=False, data={}, error="service does not support dispatch")

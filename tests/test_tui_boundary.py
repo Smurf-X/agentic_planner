@@ -35,7 +35,7 @@ def test_tui_does_not_import_agentic_planner_directly() -> None:
 
 def test_tui_runtime_access_uses_service_boundary() -> None:
     """Any agent_runtime import in TUI must go through service boundary."""
-    allowed_in_boundary = {"agent_runtime.api.service", "agent_runtime.api.schemas"}
+    allowed_in_boundary = {"agent_runtime.api.service"}
     for path in _collect_tui_python_files():
         modules = _imported_modules(path)
         runtime_imports = [module for module in modules if module.startswith("agent_runtime")]
