@@ -278,3 +278,48 @@ def test_router_unknown_action_returns_error_envelope() -> None:
 
     assert result.ok is False
     assert result.error == "unsupported action: unknown-action"
+
+
+def test_router_returns_normalized_error_for_invalid_payload_and_options() -> None:
+    """Router should normalize non-mapping payload/options errors."""
+    router = Router()
+
+    none_payload_result = router.route(action="generate", payload=None)
+    bad_options_result = router.route(
+        action="list",
+        payload={"options": "not-a-mapping"},
+    )
+
+    assert none_payload_result.ok is False
+    assert none_payload_result.error == "invalid payload: expected mapping"
+    assert none_payload_result.data["payload_type"] == "NoneType"
+
+    assert bad_options_result.ok is True
+    assert bad_options_result.error is None
+    assert bad_options_result.data["operators"]
+
+
+def test_generate_and_optimize_tools_handle_none_options() -> None:
+    """Generate/optimize tools should safely normalize None options."""
+    generate_result = generate_yaml_tool(
+        intent="clean text",
+        dataset_path="/tmp/a.jsonl",
+        model_config_path="/tmp/models.yaml",
+        options=None,
+    )
+    optimize_result = optimize_yaml_tool(
+        yaml_text_or_path="process:\n  - clean_text_mapper: {}\n",
+        objective="cost",
+        model_config_path="/tmp/models.yaml",
+        options=None,
+    )
+
+    assert generate_result.ok is True
+    assert generate_result.error is None
+    assert generate_result.data["options"] == {}
+    assert generate_result.token_usage is None
+
+    assert optimize_result.ok is True
+    assert optimize_result.error is None
+    assert optimize_result.data["options"] == {}
+    assert optimize_result.token_usage is None

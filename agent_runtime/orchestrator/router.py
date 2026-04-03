@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Mapping, Optional
 
 from agent_runtime.api.schemas import ToolResponse
 from agent_runtime.tools.explain_op import explain_op_tool
@@ -17,16 +17,37 @@ from agent_runtime.tools.validate_yaml import validate_yaml_tool
 class Router:
     """Rule-based placeholder router for future actions."""
 
-    def route(self, action: str, payload: Dict[str, Any]) -> ToolResponse:
+    @staticmethod
+    def _coerce_payload(payload: Any) -> Optional[Dict[str, Any]]:
+        """Coerce payload to a dict when it is mapping-like."""
+        if isinstance(payload, Mapping):
+            return dict(payload)
+        return None
+
+    @staticmethod
+    def _coerce_options(raw_options: Any) -> Dict[str, Any]:
+        """Coerce options to a dictionary; fallback to empty mapping."""
+        if isinstance(raw_options, Mapping):
+            return dict(raw_options)
+        return {}
+
+    def route(self, action: str, payload: Any) -> ToolResponse:
         """Route actions to tool wrappers and return normalized envelopes."""
-        safe_payload = dict(payload)
+        safe_payload = self._coerce_payload(payload)
+        if safe_payload is None:
+            return error_response(
+                "invalid payload: expected mapping",
+                data={"payload_type": type(payload).__name__},
+            )
+
+        safe_options = self._coerce_options(safe_payload.get("options"))
 
         if action == "generate":
             return generate_yaml_tool(
                 intent=str(safe_payload.get("intent", "")),
                 dataset_path=str(safe_payload.get("dataset_path", "")),
                 model_config_path=str(safe_payload.get("model_config_path", "")),
-                options=dict(safe_payload.get("options", {})),
+                options=safe_options,
             )
 
         if action == "optimize":
@@ -34,22 +55,22 @@ class Router:
                 yaml_text_or_path=str(safe_payload.get("yaml_text_or_path", "")),
                 objective=str(safe_payload.get("objective", "")),
                 model_config_path=str(safe_payload.get("model_config_path", "")),
-                options=dict(safe_payload.get("options", {})),
+                options=safe_options,
             )
 
         if action in {"list", "list_ops"}:
-            return list_ops_tool(options=dict(safe_payload.get("options", {})))
+            return list_ops_tool(options=safe_options)
 
         if action in {"explain", "explain_op"}:
             return explain_op_tool(
                 operator_name=str(safe_payload.get("operator_name", "")),
-                options=dict(safe_payload.get("options", {})),
+                options=safe_options,
             )
 
         if action == "validate":
             return validate_yaml_tool(
                 yaml_text_or_path=str(safe_payload.get("yaml_text_or_path", "")),
-                options=dict(safe_payload.get("options", {})),
+                options=safe_options,
             )
 
         return error_response(f"unsupported action: {action}")

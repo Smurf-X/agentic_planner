@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from agent_runtime.api.schemas import ToolResponse
 from agent_runtime.tools.envelope import error_response, ok_response
@@ -31,7 +31,7 @@ def optimize_yaml_tool(
     yaml_text_or_path: str,
     objective: str,
     model_config_path: str,
-    options: Dict[str, Any],
+    options: Optional[Dict[str, Any]],
 ) -> ToolResponse:
     """Return deterministic optimization output in a normalized envelope."""
     if not yaml_text_or_path:
@@ -45,12 +45,13 @@ def optimize_yaml_tool(
     if not yaml_input.ok:
         return yaml_input
     optimized_yaml = str(yaml_input.data["yaml_text"])
+    safe_options = dict(options or {})
 
     data: Dict[str, Any] = {
         "optimized_yaml": optimized_yaml,
         "objective": objective,
         "model_config_path": model_config_path,
-        "options": dict(options),
+        "options": safe_options,
         "candidate_count": 1,
     }
-    return ok_response(data=data, token_usage=options.get("token_usage"))
+    return ok_response(data=data, token_usage=safe_options.get("token_usage"))
