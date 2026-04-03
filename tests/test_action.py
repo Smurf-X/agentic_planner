@@ -4,6 +4,7 @@
 import pytest
 
 from agentic_planner.optimizer.action import Action, ActionSpace, ActionSpaceBuilder
+from agentic_planner.optimizer.op_locator import TargetLocator
 from agentic_planner.optimizer.directives.adjust_threshold import (
     TightenFiltersDirective,
     LoosenFiltersDirective,
@@ -28,29 +29,30 @@ class TestAction:
     def test_action_creation(self):
         directive = TightenFiltersDirective(intensity=0.1)
         action = Action(
-            operator_index=0,
+            target_locator=TargetLocator(operator_id="op-1", audit_identity_hash="hash-1"),
             operator_name="text_length_filter",
             directive=directive,
         )
 
-        assert action.operator_index == 0
+        assert action.target_locator.operator_id == "op-1"
         assert action.operator_name == "text_length_filter"
         assert action.directive_name == "tighten_filters"
 
     def test_action_hash_and_equality(self):
         directive = TightenFiltersDirective(intensity=0.1)
+        locator = TargetLocator(operator_id="op-1", audit_identity_hash="hash-1")
         action1 = Action(
-            operator_index=0,
+            target_locator=locator,
             operator_name="text_length_filter",
             directive=directive,
         )
         action2 = Action(
-            operator_index=0,
+            target_locator=locator,
             operator_name="text_length_filter",
             directive=directive,
         )
         action3 = Action(
-            operator_index=1,
+            target_locator=TargetLocator(operator_id="op-2", audit_identity_hash="hash-2"),
             operator_name="text_length_filter",
             directive=directive,
         )
@@ -64,23 +66,23 @@ class TestActionSpace:
     def test_action_space_creation(self):
         directive = TightenFiltersDirective()
         actions = [
-            Action(0, "text_length_filter", directive),
-            Action(1, "words_num_filter", directive),
+            Action(TargetLocator("op-1", "hash-1"), "text_length_filter", directive),
+            Action(TargetLocator("op-2", "hash-2"), "words_num_filter", directive),
         ]
 
         space = ActionSpace(actions=actions, config_hash="abc123", operator_count=2)
 
         assert len(space) == 2
-        assert space[0].operator_index == 0
-        assert space[1].operator_index == 1
+        assert space[0].target_locator.operator_id == "op-1"
+        assert space[1].target_locator.operator_id == "op-2"
 
     def test_action_space_filter(self):
         directive1 = TightenFiltersDirective()
         directive2 = LoosenFiltersDirective()
         actions = [
-            Action(0, "text_length_filter", directive1),
-            Action(0, "text_length_filter", directive2),
-            Action(1, "words_num_filter", directive1),
+            Action(TargetLocator("op-1", "hash-1"), "text_length_filter", directive1),
+            Action(TargetLocator("op-1", "hash-1"), "text_length_filter", directive2),
+            Action(TargetLocator("op-2", "hash-2"), "words_num_filter", directive1),
         ]
 
         space = ActionSpace(actions=actions)
@@ -88,23 +90,23 @@ class TestActionSpace:
         filtered = space.filter(lambda a: a.directive_name == "tighten_filters")
         assert len(filtered) == 2
 
-        filtered2 = space.get_for_operator(0)
+        filtered2 = space.get_for_operator("op-1")
         assert len(filtered2) == 2
 
     def test_action_space_exclude(self):
         directive = TightenFiltersDirective()
         actions = [
-            Action(0, "text_length_filter", directive),
-            Action(1, "words_num_filter", directive),
+            Action(TargetLocator("op-1", "hash-1"), "text_length_filter", directive),
+            Action(TargetLocator("op-2", "hash-2"), "words_num_filter", directive),
         ]
 
         space = ActionSpace(actions=actions)
 
-        used = {(0, "tighten_filters")}
+        used = {actions[0].action_key}
         remaining = space.exclude(used)
 
         assert len(remaining) == 1
-        assert remaining[0].operator_index == 1
+        assert remaining[0].target_locator.operator_id == "op-2"
 
 
 class TestActionSpaceBuilder:
@@ -134,4 +136,40 @@ class TestActionSpaceBuilder:
 
         assert len(actions) == 2
         for action in actions:
-            assert action.operator_index == 0
+            assert action.target_locator.operator_id
+
+    def test_action_key_includes_directive_signature(self, sample_config):
+        builder = ActionSpaceBuilder(
+            directives=[
+                TightenFiltersDirective(intensity=0.1),
+                TightenFiltersDirective(intensity=0.5),
+            ]
+        )
+        actions = builder.build_for_operator(sample_config, 0)
+
+        assert len(actions) == 2
+        assert actions[0].action_key != actions[1].action_key
+
+    def test_apply_fails_closed_when_target_is_deleted(self, sample_config):
+        builder = ActionSpaceBuilder(directives=[TightenFiltersDirective()])
+        action = builder.build(sample_config).actions[0]
+
+        removed_id = action.target_locator.operator_id
+        mutated = {
+            **sample_config,
+            "process": [
+                step
+                for step in sample_config["process"]
+                if not (
+                    isinstance(step, dict)
+                    and isinstance(next(iter(step.values()), {}), dict)
+                    and next(iter(step.values()), {}).get("_ap_operator_id") == removed_id
+                )
+            ],
+        }
+
+        result = action.apply(mutated)
+
+        assert result.ok is False
+        assert result.applied is False
+        assert "no longer exists" in result.message

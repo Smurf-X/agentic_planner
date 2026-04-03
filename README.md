@@ -135,7 +135,6 @@ print(f"Best quality: {result.best_quality}")
 - `remove_redundant_ops`: Remove duplicate or no-op operators
 - `adjust_threshold`: Tune filter thresholds
 - `swap_model`: Change LLM model for operators
-- `add_gleaning`: Add gleaning iterations for map operators
 - `rewrite_prompt`: Optimize LLM prompts
 
 #### Search-based (Stage 2)

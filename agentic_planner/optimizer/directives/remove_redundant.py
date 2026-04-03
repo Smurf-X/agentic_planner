@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List, Set
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
 from agentic_planner.contracts.recipe import DJExecutableConfig
 from agentic_planner.optimizer.directives.base import Directive, DirectiveResult

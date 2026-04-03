@@ -1,0 +1,26 @@
+dataset_path: data/support_tickets_demo_20.jsonl
+export_path: output/support_tickets_optimized.jsonl
+process:
+  - special_characters_filter:
+      max_ratio: 0.25
+  - words_num_filter:
+      min_num: 6
+      max_num: 200
+  - llm_task_relevance_filter:
+      api_or_hf_model: qwen3-8b
+      min_score: 0.60
+      n_shot: 2
+      sampling_params:
+        temperature: 0.0
+        extra_body:
+          enable_thinking: false
+      task_desc: |
+        Keep only tickets that are directly actionable by product or engineering teams.
+        Actionable means bug reports with reproducible symptoms, clear feature requests,
+        or integration failures requiring implementation work.
+        Reject spam, greetings, praise-only messages, and vague one-liners without details.
+      valid_dataset:
+        - text: "Export button crashes with traceback after update"
+          label: "yes"
+        - text: "Thanks for your amazing support team!"
+          label: "no"

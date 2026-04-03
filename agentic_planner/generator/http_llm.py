@@ -17,8 +17,6 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional
 
-import httpx
-
 from agentic_planner.generator.llm import parse_json_object_strict
 
 
@@ -40,7 +38,8 @@ class OpenAICompatibleJsonClient:
         timeout_sec: float = 120.0,
         extra_headers: Optional[Dict[str, str]] = None,
         use_response_json_object: bool = True,
-        http_client: Optional[httpx.Client] = None,
+        openai_client: Optional[Any] = None,
+        default_chat_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.model = model
         self._api_key = (
@@ -55,12 +54,72 @@ class OpenAICompatibleJsonClient:
         self._timeout = timeout_sec
         self._extra_headers = dict(extra_headers or {})
         self._use_json_object = use_response_json_object
-        self._own_client = http_client is None
-        self._client = http_client or httpx.Client(timeout=timeout_sec)
+        self._default_chat_params = dict(default_chat_params or {})
+        self._last_usage: Dict[str, Any] = {
+            "model": self.model,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+        self._client = openai_client or self._create_openai_client()
+
+    def _create_openai_client(self) -> Any:
+        """Create OpenAI SDK client with OpenAI-compatible endpoint."""
+        try:
+            from openai import OpenAI
+        except ImportError as exc:
+            raise ImportError(
+                "openai package is required for OpenAICompatibleJsonClient; "
+                "install with `pip install openai`"
+            ) from exc
+
+        kwargs: Dict[str, Any] = {
+            "api_key": self._api_key,
+            "base_url": self._base_url,
+            "timeout": self._timeout,
+        }
+        if self._extra_headers:
+            kwargs["default_headers"] = self._extra_headers
+        return OpenAI(**kwargs)
+
+    def _capture_usage(self, response: Any) -> None:
+        """Capture token usage from OpenAI-compatible response."""
+        usage = getattr(response, "usage", None)
+        model = getattr(response, "model", self.model)
+
+        if usage is None and isinstance(response, dict):
+            usage = response.get("usage")
+            model = response.get("model", self.model)
+
+        prompt_tokens = 0
+        completion_tokens = 0
+        total_tokens = 0
+
+        if usage is not None:
+            if isinstance(usage, dict):
+                prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+                completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+                total_tokens = int(usage.get("total_tokens", 0) or 0)
+            else:
+                prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+                completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+                total_tokens = int(getattr(usage, "total_tokens", 0) or 0)
+
+        self._last_usage = {
+            "model": model,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+        }
+
+    def get_last_usage(self) -> Dict[str, Any]:
+        """Get token usage from the last request."""
+        return dict(self._last_usage)
 
     def close(self) -> None:
-        if self._own_client:
-            self._client.close()
+        close_fn = getattr(self._client, "close", None)
+        if callable(close_fn):
+            close_fn()
 
     def __enter__(self) -> "OpenAICompatibleJsonClient":
         return self
@@ -73,12 +132,6 @@ class OpenAICompatibleJsonClient:
             raise ValueError(
                 "api_key is required (pass api_key=... or set OPENAI_API_KEY in the environment).",
             )
-        url = f"{self._base_url}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self._api_key}",
-            "Content-Type": "application/json",
-            **self._extra_headers,
-        }
         messages: List[Dict[str, str]] = [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
@@ -87,16 +140,20 @@ class OpenAICompatibleJsonClient:
             "model": self.model,
             "messages": messages,
         }
+        for key, value in self._default_chat_params.items():
+            if key not in {"model", "messages"}:
+                body[key] = value
         if self._use_json_object:
             body["response_format"] = {"type": "json_object"}
 
-        resp = self._client.post(url, headers=headers, json=body, timeout=self._timeout)
-        resp.raise_for_status()
-        data = resp.json()
+        response = self._client.chat.completions.create(**body)
+        self._capture_usage(response)
         try:
-            content = data["choices"][0]["message"]["content"]
+            content = response.choices[0].message.content
         except (KeyError, IndexError, TypeError) as exc:
-            raise ValueError(f"unexpected chat completions response shape: {data!r}") from exc
+            raise ValueError(
+                "unexpected chat completions response shape from OpenAI-compatible client"
+            ) from exc
         if content is None or (isinstance(content, str) and not content.strip()):
             raise ValueError("empty assistant message content")
         text = content if isinstance(content, str) else str(content)
@@ -125,12 +182,6 @@ class OpenAICompatibleJsonClient:
             raise ValueError(
                 "api_key is required (pass api_key=... or set OPENAI_API_KEY in the environment).",
             )
-        url = f"{self._base_url}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self._api_key}",
-            "Content-Type": "application/json",
-            **self._extra_headers,
-        }
         messages: List[Dict[str, str]] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -140,12 +191,16 @@ class OpenAICompatibleJsonClient:
             "messages": messages,
             "temperature": temperature,
         }
+        for key, value in self._default_chat_params.items():
+            if key not in {"model", "messages", "temperature"}:
+                body[key] = value
 
-        resp = self._client.post(url, headers=headers, json=body, timeout=self._timeout)
-        resp.raise_for_status()
-        data = resp.json()
+        response = self._client.chat.completions.create(**body)
+        self._capture_usage(response)
         try:
-            content = data["choices"][0]["message"]["content"]
+            content = response.choices[0].message.content
         except (KeyError, IndexError, TypeError) as exc:
-            raise ValueError(f"unexpected chat completions response shape: {data!r}") from exc
+            raise ValueError(
+                "unexpected chat completions response shape from OpenAI-compatible client"
+            ) from exc
         return content if isinstance(content, str) else str(content)

@@ -12,6 +12,8 @@ import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
+from agentic_planner.optimizer.op_locator import TargetLocator
+
 if TYPE_CHECKING:
     from agentic_planner.optimizer.action import Action, ActionSpace
     from agentic_planner.optimizer.action_context import ActionSelectionContext
@@ -32,6 +34,21 @@ class ActionSelectionResult:
 
     llm_cost: float = 0.0
     """Cost of LLM call."""
+
+    planned_selections: List["PlannedActionSelection"] = field(default_factory=list)
+    """Structured plans containing template + target + instantiation params."""
+
+
+@dataclass
+class PlannedActionSelection:
+    """Structured plan emitted by action selection."""
+
+    directive_template: str
+    target_locator: TargetLocator
+    instantiate_params: Dict[str, Any] = field(default_factory=dict)
+    directive_name: str = ""
+    score: float = 1.0
+    reason: str = ""
 
 
 class LLMActionSelector:
@@ -214,7 +231,14 @@ Consider:
 Output your selection as a JSON object with the following format:
 {
   "selected": [
-    {"operator_index": 0, "directive": "directive_name", "reason": "brief reason"},
+    {
+      "directive_template": "tighten_threshold",
+      "target_locator": {"operator_id": "op-123", "audit_identity_hash": "hash"},
+      "instantiate_params": {"intensity": 0.2},
+      "directive": "tighten_filters",
+      "reason": "brief reason",
+      "score": 0.0
+    },
     ...
   ],
   "reasoning": "Overall strategy explanation"
@@ -241,7 +265,14 @@ Your goal is to balance:
 Output your selection as a JSON object:
 {
   "selected": [
-    {"operator_index": 0, "directive": "directive_name", "reason": "brief reason"},
+    {
+      "directive_template": "tighten_threshold",
+      "target_locator": {"operator_id": "op-123", "audit_identity_hash": "hash"},
+      "instantiate_params": {"intensity": 0.2},
+      "directive": "tighten_filters",
+      "reason": "brief reason",
+      "score": 0.0
+    },
     ...
   ],
   "reasoning": "Overall strategy explanation"
@@ -259,8 +290,12 @@ Output your selection as a JSON object:
         actions_desc = []
         for i, action in enumerate(action_space):
             actions_desc.append(
-                f"  [{i}] Operator: {action.operator_name} (index {action.operator_index}), "
-                f"Directive: {action.directive_name}"
+                f"  [{i}] Operator: {action.operator_name} "
+                f"(id {action.target_locator.operator_id}), "
+                f"Template: {action.directive_template}, "
+                f"Directive: {action.directive_name}, "
+                f"Target: {action.target_locator.to_dict()}, "
+                f"Params: {json.dumps(action.instantiate_params, ensure_ascii=False)}"
             )
 
         config_yaml = yaml.dump(context.config, allow_unicode=True, default_flow_style=False)
@@ -320,8 +355,12 @@ Prioritize exploration of untested actions while balancing with exploitation of 
         actions_desc = []
         for i, action in enumerate(action_space):
             actions_desc.append(
-                f"  [{i}] Operator: {action.operator_name} (index {action.operator_index}), "
-                f"Directive: {action.directive_name}"
+                f"  [{i}] Operator: {action.operator_name} "
+                f"(id {action.target_locator.operator_id}), "
+                f"Template: {action.directive_template}, "
+                f"Directive: {action.directive_name}, "
+                f"Target: {action.target_locator.to_dict()}, "
+                f"Params: {json.dumps(action.instantiate_params, ensure_ascii=False)}"
             )
 
         current_config = context.get("current_config", {})
@@ -356,7 +395,8 @@ Focus on actions that address specific weaknesses or opportunities."""
     ) -> str:
         """Build prompt for ranking actions."""
         actions_desc = [
-            f"[{i}] {a.operator_name}[{a.operator_index}] -> {a.directive_name}"
+            f"[{i}] {a.operator_name}[{a.target_locator.operator_id}] "
+            f"-> {a.directive_template} ({a.directive_name})"
             for i, a in enumerate(actions)
         ]
 
@@ -377,34 +417,208 @@ Output a JSON object mapping action index to predicted effectiveness score (0.0-
         response: str,
     ) -> ActionSelectionResult:
         """Parse LLM response into selected actions."""
-        text = response.strip()
-
-        if "```json" in text:
-            text = text.split("```json")[1].split("```")[0]
-        elif "```" in text:
-            text = text.split("```")[1].split("```")[0]
-
-        data = json.loads(text)
+        data = self._parse_json_object(response)
 
         selected = []
         scores = {}
+        planned: List[PlannedActionSelection] = []
+        seen_action_keys = set()
 
-        action_map = {(a.operator_index, a.directive_name): a for a in action_space}
+        action_map = {(a.target_locator.operator_id, a.directive_name): a for a in action_space}
+        action_map_by_key = {a.action_key: a for a in action_space}
+        action_map_by_template = {
+            (
+                a.target_locator.operator_id,
+                a.target_locator.audit_identity_hash,
+                a.directive_template,
+            ): a
+            for a in action_space
+        }
+        action_map_by_template_op = {
+            (a.target_locator.operator_id, a.directive_template): a for a in action_space
+        }
+        ordered_actions = list(action_space)
 
         for item in data.get("selected", [])[:top_k]:
-            op_idx = item.get("operator_index")
-            directive = item.get("directive")
+            action = self._resolve_selected_action(
+                item,
+                ordered_actions,
+                action_map,
+                action_map_by_key,
+                action_map_by_template,
+                action_map_by_template_op,
+            )
 
-            key = (op_idx, directive)
-            if key in action_map:
-                selected.append(action_map[key])
-                scores[f"{op_idx}:{directive}"] = 1.0
+            if action is None or action.action_key in seen_action_keys:
+                continue
+
+            selected.append(action)
+            seen_action_keys.add(action.action_key)
+
+            score = float(item.get("score", 1.0))
+            scores[action.action_key] = score
+
+            planned_item = self._to_planned_selection(item, fallback_action=action, score=score)
+            if planned_item is not None:
+                planned.append(planned_item)
+
+        if not planned:
+            planned = self._plans_from_actions(selected)
 
         return ActionSelectionResult(
             selected_actions=selected,
             scores=scores,
             reasoning=data.get("reasoning", ""),
+            planned_selections=planned,
         )
+
+    def _resolve_selected_action(
+        self,
+        item: Dict[str, Any],
+        ordered_actions: List[Action],
+        action_map: Dict[Tuple[str, str], Action],
+        action_map_by_key: Dict[str, Action],
+        action_map_by_template: Dict[Tuple[str, str, str], Action],
+        action_map_by_template_op: Dict[Tuple[str, str], Action],
+    ) -> Optional[Action]:
+        """Resolve a selected JSON item to a concrete action."""
+        action_key = item.get("action_key")
+        if isinstance(action_key, str) and action_key in action_map_by_key:
+            return action_map_by_key[action_key]
+
+        op_id: Optional[str] = item.get("operator_id")
+        locator = self._parse_target_locator(item.get("target_locator"))
+        if locator is not None:
+            op_id = locator.operator_id
+
+        if op_id is None and isinstance(item.get("operator_index"), int):
+            index_value = item.get("operator_index")
+            if 0 <= index_value < len(ordered_actions):
+                op_id = ordered_actions[index_value].target_locator.operator_id
+                locator = ordered_actions[index_value].target_locator
+
+        directive_name = item.get("directive") or item.get("directive_name")
+        directive_template = item.get("directive_template") or self._map_directive_to_template(
+            directive_name
+        )
+
+        if op_id is None:
+            return None
+
+        if locator is not None and directive_template:
+            template_key = (op_id, locator.audit_identity_hash, directive_template)
+            if template_key in action_map_by_template:
+                return action_map_by_template[template_key]
+
+        if directive_name:
+            legacy_key = (op_id, directive_name)
+            if legacy_key in action_map:
+                return action_map[legacy_key]
+
+        if directive_template:
+            template_op_key = (op_id, directive_template)
+            if template_op_key in action_map_by_template_op:
+                return action_map_by_template_op[template_op_key]
+
+        return None
+
+    def _parse_target_locator(self, payload: Any) -> Optional[TargetLocator]:
+        """Parse target locator payload into object form."""
+        if not isinstance(payload, dict):
+            return None
+
+        operator_id = payload.get("operator_id")
+        audit_identity_hash = payload.get("audit_identity_hash")
+        if not isinstance(operator_id, str) or not operator_id:
+            return None
+        if not isinstance(audit_identity_hash, str) or not audit_identity_hash:
+            return None
+
+        return TargetLocator(
+            operator_id=operator_id,
+            audit_identity_hash=audit_identity_hash,
+        )
+
+    def _to_planned_selection(
+        self,
+        item: Dict[str, Any],
+        fallback_action: Action,
+        score: float,
+    ) -> Optional[PlannedActionSelection]:
+        """Build a structured plan item from parsed model output."""
+        target_locator = self._parse_target_locator(item.get("target_locator")) or fallback_action.target_locator
+        if target_locator is None:
+            return None
+
+        directive_name = item.get("directive") or item.get("directive_name") or fallback_action.directive_name
+        directive_template = (
+            item.get("directive_template")
+            or self._map_directive_to_template(directive_name)
+            or fallback_action.directive_template
+        )
+        instantiate_params = item.get("instantiate_params") or item.get("params")
+        if not isinstance(instantiate_params, dict):
+            instantiate_params = dict(fallback_action.instantiate_params)
+
+        return PlannedActionSelection(
+            directive_template=directive_template,
+            target_locator=target_locator,
+            instantiate_params=dict(instantiate_params),
+            directive_name=directive_name,
+            score=score,
+            reason=str(item.get("reason", "")),
+        )
+
+    def _map_directive_to_template(self, directive_name: Optional[str]) -> str:
+        """Map legacy directive names to canonical directive template names."""
+        if not directive_name:
+            return ""
+
+        alias_map = {
+            "tighten_filters": "tighten_threshold",
+            "loosen_filters": "loosen_threshold",
+            "remove_redundant_ops": "remove_redundant_op",
+            "reorder_filters_first": "safe_reorder_local",
+        }
+        return alias_map.get(directive_name, directive_name)
+
+    def _plans_from_actions(self, actions: List[Action]) -> List[PlannedActionSelection]:
+        """Build fallback structured plan payload from selected actions."""
+        return [
+            PlannedActionSelection(
+                directive_template=action.directive_template,
+                target_locator=action.target_locator,
+                instantiate_params=dict(action.instantiate_params),
+                directive_name=action.directive_name,
+                score=1.0,
+            )
+            for action in actions
+        ]
+
+    def _parse_json_object(self, response: str) -> Dict[str, Any]:
+        """Parse JSON object from plain or fenced model output."""
+        text = response.strip()
+        candidates: List[str] = [text]
+
+        if "```json" in text:
+            candidates.append(text.split("```json", 1)[1].split("```", 1)[0].strip())
+        if "```" in text:
+            candidates.append(text.split("```", 1)[1].split("```", 1)[0].strip())
+
+        first_brace = text.find("{")
+        last_brace = text.rfind("}")
+        if first_brace >= 0 and last_brace > first_brace:
+            candidates.append(text[first_brace : last_brace + 1])
+
+        for candidate in candidates:
+            try:
+                data = json.loads(candidate)
+            except Exception:
+                continue
+            if isinstance(data, dict):
+                return data
+
+        raise ValueError("Unable to parse JSON object from LLM response")
 
     def _parse_ranking_response(
         self,
@@ -412,14 +626,7 @@ Output a JSON object mapping action index to predicted effectiveness score (0.0-
         actions: List[Action],
     ) -> Dict[str, float]:
         """Parse ranking response."""
-        text = response.strip()
-
-        if "```json" in text:
-            text = text.split("```json")[1].split("```")[0]
-        elif "```" in text:
-            text = text.split("```")[1].split("```")[0]
-
-        data = json.loads(text)
+        data = self._parse_json_object(response)
 
         scores = {}
         for i, action in enumerate(actions):
@@ -430,7 +637,7 @@ Output a JSON object mapping action index to predicted effectiveness score (0.0-
 
     def _action_key(self, action: Action) -> str:
         """Generate a unique key for an action."""
-        return f"{action.operator_index}:{action.directive_name}"
+        return action.action_key
 
     def _fallback_select(
         self,
@@ -441,10 +648,12 @@ Output a JSON object mapping action index to predicted effectiveness score (0.0-
         return ActionSelectionResult(
             selected_actions=list(action_space)[:top_k],
             reasoning="LLM not available, using first-k fallback",
+            planned_selections=self._plans_from_actions(list(action_space)[:top_k]),
         )
 
 
 __all__ = [
     "LLMActionSelector",
     "ActionSelectionResult",
+    "PlannedActionSelection",
 ]

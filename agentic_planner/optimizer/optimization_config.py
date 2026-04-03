@@ -10,14 +10,14 @@ This module provides:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from agentic_planner.contracts.eval_protocol import EvalConfig, EvaluationMode
 from agentic_planner.optimizer.directive_engine import DirectiveEngineConfig, DirectiveEngineMode
-from agentic_planner.optimizer.search.beam import BeamSearchConfig
+from agentic_planner.optimizer.search.moar import MOARSearchConfig
 
 
 class PriceTable(BaseModel):
@@ -64,6 +64,31 @@ class ExecutionConfig(BaseModel):
     num_workers: int = Field(default=4, ge=1, description="Number of parallel workers")
 
 
+class SearchExecutionBoundaryConfig(BaseModel):
+    """Runtime boundary settings enforced during search evaluations."""
+
+    disable_op_fusion: bool = Field(
+        default=True,
+        description="Disable DJ op_fusion so evaluated configs remain explicit.",
+    )
+    disable_checkpoint_optimization: bool = Field(
+        default=True,
+        description="Disable DJ checkpoint optimization during search evaluation.",
+    )
+    disable_partition_optimization: bool = Field(
+        default=True,
+        description="Disable DJ partition optimization during search evaluation.",
+    )
+
+    def to_runtime_overrides(self) -> Dict[str, bool]:
+        """Build DJ runtime overrides for search evaluations."""
+        return {
+            "op_fusion": not self.disable_op_fusion,
+            "checkpoint_optimization": not self.disable_checkpoint_optimization,
+            "partition_optimization": not self.disable_partition_optimization,
+        }
+
+
 class OptimizationConfig(BaseModel):
     """
     Full configuration for optimization runs.
@@ -86,9 +111,9 @@ class OptimizationConfig(BaseModel):
     )
 
     # Stage 2: Search (optional)
-    search: Optional[BeamSearchConfig] = Field(
+    search: Optional[MOARSearchConfig] = Field(
         default=None,
-        description="Beam search configuration (for search mode)",
+        description="MOAR search configuration (for search mode)",
     )
 
     # Evaluation
@@ -101,6 +126,12 @@ class OptimizationConfig(BaseModel):
     execution: ExecutionConfig = Field(
         default_factory=ExecutionConfig,
         description="Pipeline execution configuration",
+    )
+
+    # Search runtime boundary
+    search_execution_boundary: SearchExecutionBoundaryConfig = Field(
+        default_factory=SearchExecutionBoundaryConfig,
+        description="Execution boundary settings enforced for search runs",
     )
 
     # LLM settings
@@ -142,7 +173,7 @@ class OptimizationConfig(BaseModel):
         if self.run_mode in ("search_only", "directive_then_search"):
             if self.search is None:
                 # Create default search config
-                self.search = BeamSearchConfig()
+                self.search = MOARSearchConfig()
         return self
 
     def to_yaml(self) -> str:
@@ -203,12 +234,10 @@ DEFAULT_INFERENCE_CONFIG = OptimizationConfig(
     ),
 )
 
-DEFAULT_SEARCH_CONFIG = OptimizationConfig(
+DEFAULT_MOAR_SEARCH_CONFIG = OptimizationConfig(
     run_mode="search_only",
-    search=BeamSearchConfig(
-        beam_width=4,
+    search=MOARSearchConfig(
         max_iterations=3,
-        expansion_directives=["tighten_filters", "loosen_filters"],
     ),
     evaluation=EvalConfig(
         mode=EvaluationMode.NO_LABELS,
@@ -222,10 +251,8 @@ DEFAULT_FULL_CONFIG = OptimizationConfig(
         mode=DirectiveEngineMode.STATIC,
         directives=["reorder_filters_first", "remove_redundant_ops"],
     ),
-    search=BeamSearchConfig(
-        beam_width=4,
+    search=MOARSearchConfig(
         max_iterations=3,
-        expansion_directives=["tighten_filters", "loosen_filters"],
     ),
     evaluation=EvalConfig(
         mode=EvaluationMode.NO_LABELS,
@@ -261,13 +288,12 @@ directive:
   # task_description: "Process text data for training"
   # optimization_goal: "balance cost and quality"
 
-# Stage 2: Search-based optimization (optional)
+# Stage 2: MOAR search optimization (optional)
 # search:
-#   beam_width: 4
+#   strategy: mcts
 #   max_iterations: 3
-#   expansion_directives:
-#     - tighten_filters
-#     - loosen_filters
+#   max_evaluations: 100
+#   exploration_weight: 1.4
 
 # Evaluation settings
 evaluation:
@@ -284,6 +310,12 @@ execution:
   ground_truth_path: null
   work_dir: /tmp/dj_optimizer
   num_workers: 4
+
+# Search execution boundary (applies to search modes)
+search_execution_boundary:
+  disable_op_fusion: true
+  disable_checkpoint_optimization: true
+  disable_partition_optimization: true
 
 # LLM configuration
 llm:
@@ -341,3 +373,24 @@ def load_config(
         config = OptimizationConfig.model_validate(data)
 
     return config
+
+
+# Backward-compatible alias during MOAR migration.
+DEFAULT_SEARCH_CONFIG = DEFAULT_MOAR_SEARCH_CONFIG
+
+
+__all__ = [
+    "PriceTable",
+    "LLMConfig",
+    "ExecutionConfig",
+    "SearchExecutionBoundaryConfig",
+    "OptimizationConfig",
+    "DEFAULT_DIRECTIVE_ONLY_CONFIG",
+    "DEFAULT_INFERENCE_CONFIG",
+    "DEFAULT_MOAR_SEARCH_CONFIG",
+    "DEFAULT_SEARCH_CONFIG",
+    "DEFAULT_FULL_CONFIG",
+    "CONFIG_TEMPLATE",
+    "create_sample_config_file",
+    "load_config",
+]

@@ -6,6 +6,7 @@ Analyzes a pipeline configuration and recommends which directives to apply.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol
 
@@ -15,8 +16,10 @@ from agentic_planner.contracts.recipe import DJExecutableConfig
 from agentic_planner.optimizer.directives.base import DirectiveResult
 from agentic_planner.optimizer.directives.registry import (
     DIRECTIVE_REGISTRY,
+    get_directive_spec,
     list_directive_names,
 )
+from agentic_planner.optimizer.op_locator import ProcessIndex, TargetLocator
 
 if TYPE_CHECKING:
     from agentic_planner.generator.llm import BaseLLMClient
@@ -26,9 +29,59 @@ class DirectiveRecommendation(BaseModel):
     """A single recommended directive with rationale."""
 
     directive_name: str = Field(description="Name of the directive to apply")
+    directive_template: str = Field(
+        default="",
+        description="Directive spec/template name (preferred over directive_name)",
+    )
+    target_locator: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Canonical target locator payload for per-operator directives",
+    )
+    instantiate_params: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Runtime params for template instantiation",
+    )
     priority: int = Field(default=0, ge=0, le=10, description="Priority (higher = apply earlier)")
     rationale: str = Field(default="", description="Why this directive is recommended")
-    params: Dict[str, Any] = Field(default_factory=dict, description="Optional parameters for parameterized directives")
+    params: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Legacy alias of instantiate_params (kept for compatibility)",
+    )
+
+    def resolved_template(self) -> str:
+        """Resolve directive template name with legacy fallbacks."""
+        if self.directive_template:
+            return self.directive_template
+
+        alias_map = {
+            "tighten_filters": "tighten_threshold",
+            "loosen_filters": "loosen_threshold",
+            "remove_redundant_ops": "remove_redundant_op",
+            "reorder_filters_first": "safe_reorder_local",
+        }
+        return alias_map.get(self.directive_name, self.directive_name)
+
+    def resolved_params(self) -> Dict[str, Any]:
+        """Resolve instantiate params with backward-compatible aliasing."""
+        if self.instantiate_params:
+            return dict(self.instantiate_params)
+        return dict(self.params)
+
+    def to_target_locator(self) -> Optional[TargetLocator]:
+        """Parse target locator payload into typed locator."""
+        payload = self.target_locator
+        if payload is None:
+            return None
+
+        operator_id = payload.get("operator_id")
+        audit_identity_hash = payload.get("audit_identity_hash")
+        if not operator_id or not audit_identity_hash:
+            return None
+
+        return TargetLocator(
+            operator_id=operator_id,
+            audit_identity_hash=audit_identity_hash,
+        )
 
 
 class DirectiveRecommendations(BaseModel):
@@ -87,6 +140,9 @@ Return your recommendations as a JSON object with this structure:
   "recommendations": [
     {
       "directive_name": "name of directive",
+      "directive_template": "directive spec/template key",
+      "target_locator": {"operator_id": "op-123", "audit_identity_hash": "hash"},
+      "instantiate_params": {},
       "priority": 0-10,
       "rationale": "why this helps",
       "params": {}
@@ -178,8 +234,6 @@ class DirectiveInferenceEngine:
 
     def _analyze_with_llm(self, cfg: DJExecutableConfig) -> DirectiveRecommendations:
         """Use LLM to analyze and recommend."""
-        import json
-
         system_prompt, user_prompt = DirectiveInferencePromptBuilder.build_prompt(
             cfg,
             self._task_description,
@@ -192,30 +246,49 @@ class DirectiveInferenceEngine:
                 user_prompt=user_prompt,
                 temperature=0.3,
             )
-            # Parse JSON from response
-            text = response.strip()
-            # Handle markdown code blocks
-            if "```json" in text:
-                text = text.split("```json")[1].split("```")[0]
-            elif "```" in text:
-                text = text.split("```")[1].split("```")[0]
-
-            data = json.loads(text)
+            data = self._parse_json_object(response)
             return DirectiveRecommendations.model_validate(data)
-        except Exception as e:
+        except Exception:
             # Fall back to heuristics on LLM error
             return self._analyze_with_heuristics(cfg)
+
+    def _parse_json_object(self, text: str) -> Dict[str, Any]:
+        """Parse JSON object from plain or fenced model output."""
+        stripped = text.strip()
+
+        candidates: List[str] = [stripped]
+        if "```json" in stripped:
+            candidates.append(stripped.split("```json", 1)[1].split("```", 1)[0].strip())
+        if "```" in stripped:
+            candidates.append(stripped.split("```", 1)[1].split("```", 1)[0].strip())
+
+        first_brace = stripped.find("{")
+        last_brace = stripped.rfind("}")
+        if first_brace >= 0 and last_brace > first_brace:
+            candidates.append(stripped[first_brace : last_brace + 1])
+
+        for candidate in candidates:
+            try:
+                data = json.loads(candidate)
+            except Exception:
+                continue
+            if isinstance(data, dict):
+                return data
+
+        raise ValueError("Failed to parse JSON object from model response")
 
     def _analyze_with_heuristics(self, cfg: DJExecutableConfig) -> DirectiveRecommendations:
         """Simple heuristic-based analysis (fallback)."""
         recommendations: List[DirectiveRecommendation] = []
         proc = cfg.get("process", [])
+        index = ProcessIndex.build(proc if isinstance(proc, list) else [])
 
         # Always recommend reorder if there are multiple operators
         if len(proc) >= 2:
             recommendations.append(
                 DirectiveRecommendation(
                     directive_name="reorder_filters_first",
+                    directive_template="safe_reorder_local",
                     priority=10,
                     rationale="Move filters before mappers to reduce downstream data volume",
                 )
@@ -225,6 +298,7 @@ class DirectiveInferenceEngine:
         recommendations.append(
             DirectiveRecommendation(
                 directive_name="remove_redundant_ops",
+                directive_template="remove_redundant_op",
                 priority=9,
                 rationale="Remove duplicate or no-op operators",
             )
@@ -239,9 +313,15 @@ class DirectiveInferenceEngine:
             if name == "text_length_filter" and isinstance(params, dict):
                 min_len = params.get("min_len", 0)
                 if min_len < 10:
+                    locator = None
+                    if i < len(index.identities):
+                        locator = index.identities[i].to_target_locator().to_dict()
                     recommendations.append(
                         DirectiveRecommendation(
                             directive_name="bump_text_length_min_len",
+                            directive_template="bump_text_length_min_len",
+                            target_locator=locator,
+                            instantiate_params={"delta": 10},
                             priority=5,
                             rationale=f"Increase min_len from {min_len} to filter more noise",
                         )
@@ -270,16 +350,42 @@ class DirectiveInferenceEngine:
         errors: List[str] = []
 
         for rec in recommendations.recommendations:
-            directive = DIRECTIVE_REGISTRY.get(rec.directive_name)
-            if directive is None:
-                errors.append(f"Unknown directive: {rec.directive_name}")
+            template_name = rec.resolved_template()
+            runtime_name = rec.directive_name or template_name
+            params = rec.resolved_params()
+            target_locator = rec.to_target_locator()
+
+            result: Optional[DirectiveResult] = None
+            spec = get_directive_spec(template_name)
+            if spec is not None:
+                instantiated = spec.instantiate(params=params, target_locator=target_locator)
+                result = instantiated.apply(current)
+                runtime_name = instantiated.directive.name
+            else:
+                directive = DIRECTIVE_REGISTRY.get(runtime_name) or DIRECTIVE_REGISTRY.get(template_name)
+                if directive is None:
+                    errors.append(f"Unknown directive: {runtime_name}")
+                    continue
+
+                target_index = None
+                if target_locator is not None:
+                    target_index = ProcessIndex.build(current.get("process", [])).locate_target(target_locator)
+                    if target_index is None:
+                        errors.append(
+                            "target operator no longer exists "
+                            f"(operator_id={target_locator.operator_id})"
+                        )
+                        continue
+                result = directive.apply(current, target_op=target_index)
+
+            if result is None:
+                errors.append(f"{runtime_name}: failed to execute")
                 continue
 
-            result = directive.apply(current)
             trace.append(result)
 
             if not result.ok:
-                errors.append(f"{rec.directive_name}: {result.message}")
+                errors.append(f"{runtime_name}: {result.message}")
                 continue
 
             if result.applied and result.config_after:
