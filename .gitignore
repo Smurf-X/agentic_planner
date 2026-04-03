@@ -25,6 +25,7 @@ ENV/
 
 # Data-Juicer work directories
 .dj_work/
+.agent_runtime/
 
 # IDE
 .vscode/

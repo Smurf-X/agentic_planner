@@ -36,6 +36,15 @@ pip install data-juicer
 
 ## Quick Start
 
+### Agent Runtime TUI (MVP)
+
+```bash
+python -m apps.tui.main
+```
+
+The TUI delegates runtime actions through `agent_runtime.api.service.AgentRuntimeService`.
+Each runtime action emits one JSONL telemetry event to `.agent_runtime/logs/events.jsonl`.
+
 ### Generator: Natural Language to YAML
 
 ```python
