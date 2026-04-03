@@ -8,12 +8,19 @@ import logging
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
-    from textual.app import App as TextualApp
+    from textual.app import App as TextualBaseApp
+    from textual.app import ComposeResult
+    from textual.containers import Horizontal, Vertical
+    from textual.widgets import Footer, Header, Input, RichLog, Static
+
+    TEXTUAL_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    class TextualApp:  # type: ignore[no-redef]
+    TEXTUAL_AVAILABLE = False
+
+    class TextualBaseApp:  # type: ignore[no-redef]
         """Fallback base app for environments without textual installed."""
 
         def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -35,11 +42,100 @@ class AppRoute:
     screen: Any
 
 
-class AgentPlannerTUI(TextualApp):
-    """Minimal TUI shell that exposes MVP menu routes."""
+@dataclass
+class SessionContext:
+    """Mutable command context for both plain and textual UIs."""
 
-    def __init__(self, service: Optional[RuntimeServiceLike] = None) -> None:
-        super().__init__()
+    objective: str
+    dataset_path: str
+    model_config_path: str
+    model: str
+    base_url: str
+    api_key: str
+    max_iterations: int
+    current_yaml: str = ""
+
+
+class AgentPlannerTUI(TextualBaseApp):
+    """TUI shell with a Textual UI when available and plain fallback otherwise."""
+
+    if TEXTUAL_AVAILABLE:
+        CSS = """
+        Screen {
+            background: #12141a;
+            color: #eaf0ff;
+        }
+        Header {
+            background: #1f2432;
+            color: #eaf0ff;
+            text-style: bold;
+        }
+        Footer {
+            background: #1a1f2b;
+            color: #aeb8d4;
+        }
+        #layout {
+            height: 1fr;
+            padding: 1 2;
+            background: #12141a;
+        }
+        #left-pane {
+            width: 38;
+            border: round #2d3448;
+            padding: 1 2;
+            background: #1a1f2b;
+            margin-right: 1;
+        }
+        #right-pane {
+            width: 1fr;
+            border: round #2d3448;
+            padding: 0;
+            background: #202738;
+        }
+        #output-title {
+            height: 1;
+            color: #ff7a59;
+            background: #1a1f2b;
+            text-style: bold;
+            padding: 0 1;
+            border-bottom: solid #2d3448;
+        }
+        #output {
+            background: #202738;
+            color: #eaf0ff;
+            padding: 1;
+        }
+        #menu-title {
+            color: #ff7a59;
+            text-style: bold;
+            margin-bottom: 1;
+        }
+        #menu-body {
+            color: #c2cbea;
+        }
+        #status {
+            height: auto;
+            color: #12141a;
+            background: #38bdf8;
+            text-style: bold;
+            padding: 0 2;
+            margin: 0 2;
+        }
+        #command-input {
+            dock: bottom;
+            background: #161b27;
+            color: #f5f8ff;
+            border-top: solid #2d3448;
+            padding: 0 1;
+        }
+        #command-input:focus {
+            border-top: solid #ff7a59;
+            background: #1c2232;
+        }
+        """
+
+    def __init__(self, service: Optional[RuntimeServiceLike] = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self.service: RuntimeServiceLike = service or create_runtime_service()
         self._routes: Dict[str, AppRoute] = {
             "generate": AppRoute(name="generate", screen=WorkflowScreen),
@@ -48,6 +144,19 @@ class AgentPlannerTUI(TextualApp):
             "chat": AppRoute(name="chat", screen=ChatScreen),
             "export": AppRoute(name="export", screen=ExportScreen),
         }
+        self.workflow = self.open_route("generate")
+        self.operator = self.open_route("operator")
+        self.chat = self.open_route("chat")
+
+        self.ctx = SessionContext(
+            objective="quality",
+            dataset_path="",
+            model_config_path="",
+            model="",
+            base_url="",
+            api_key="",
+            max_iterations=3,
+        )
 
     def get_menu_routes(self) -> List[str]:
         """Return top-level MVP routes in menu order."""
@@ -63,6 +172,87 @@ class AgentPlannerTUI(TextualApp):
             return route.screen(service=self.service)
         return route.screen()
 
+    if TEXTUAL_AVAILABLE:
+
+        def compose(self) -> ComposeResult:
+            """Compose Textual layout."""
+            yield Header(show_clock=True)
+            yield Static("", id="status")
+            with Horizontal(id="layout"):
+                with Vertical(id="left-pane"):
+                    yield Static("Agentic Planner", id="menu-title")
+                    yield Static(
+                        "\n".join(
+                            [
+                                "Commands",
+                                "  help / h / ?",
+                                "  generate <intent>",
+                                "  optimize",
+                                "  validate",
+                                "  ops",
+                                "  op <name>",
+                                "",
+                                "Set context",
+                                "  set dataset <path>",
+                                "  set model_config <path>",
+                                "  set model <name>",
+                                "  set objective <quality|cost|balanced>",
+                                "",
+                                "Exit",
+                                "  quit / q",
+                            ]
+                        ),
+                        id="menu-body",
+                    )
+                with Vertical(id="right-pane"):
+                    yield Static("Session Output", id="output-title")
+                    yield RichLog(highlight=True, markup=False, wrap=True, id="output")
+            yield Input(placeholder="Type command, e.g. generate 清洗客服工单", id="command-input")
+            yield Footer()
+
+        def on_mount(self) -> None:
+            """Initialize view on mount."""
+            self._refresh_status()
+            self._write_lines([
+                "Agentic Planner Textual UI ready.",
+                "Type `help` to view commands.",
+            ])
+
+        def on_input_submitted(self, event: Input.Submitted) -> None:
+            """Handle command input in Textual mode."""
+            raw = event.value.strip()
+            event.input.value = ""
+            if not raw:
+                return
+
+            lines, should_quit = execute_command(
+                raw,
+                ctx=self.ctx,
+                workflow=self.workflow,
+                operator=self.operator,
+                chat=self.chat,
+            )
+            self._write_lines([f"> {raw}"] + lines)
+            self._refresh_status()
+            if should_quit:
+                self.exit()
+
+        def _refresh_status(self) -> None:
+            """Refresh status strip text."""
+            status = build_status_line(
+                objective=self.ctx.objective,
+                dataset_path=self.ctx.dataset_path,
+                model_config_path=self.ctx.model_config_path,
+                model=self.ctx.model,
+            )
+            self.query_one("#status", Static).update(status)
+
+        def _write_lines(self, lines: List[str]) -> None:
+            """Append lines to output log."""
+            output = self.query_one("#output", RichLog)
+            for line in lines:
+                output.write(line)
+
 
 def _build_parser() -> argparse.ArgumentParser:
     """Build CLI parser for interactive TUI runner."""
@@ -74,6 +264,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--api-key", default="", help="API key")
     parser.add_argument("--objective", default="quality", help="Optimize objective")
     parser.add_argument("--max-iterations", type=int, default=3, help="Optimizer max iterations")
+    parser.add_argument("--plain", action="store_true", help="Use plain prompt-loop instead of Textual UI")
     return parser
 
 
@@ -81,17 +272,22 @@ def build_help_text() -> str:
     """Build compact help text shown in the command loop."""
     return (
         "Commands:\n"
-        "  generate (alias: g)  - Build YAML from intent\n"
-        "  optimize (alias: o)  - Optimize current YAML\n"
-        "  ops                  - List operators\n"
-        "  op <name>            - Explain one operator\n"
-        "  validate (alias: v)  - Validate current YAML\n"
-        "  help (aliases: h, ?) - Show this help\n"
-        "  quit (alias: q)      - Exit\n"
+        "  generate <intent>      - Build YAML from intent\n"
+        "  optimize               - Optimize current YAML\n"
+        "  ops                    - List operators\n"
+        "  op <name>              - Explain one operator\n"
+        "  validate               - Validate current YAML\n"
+        "  set dataset <path>     - Set default dataset path\n"
+        "  set model_config <p>   - Set default models.yaml path\n"
+        "  set model <name>       - Set preferred model\n"
+        "  set objective <value>  - quality | cost | balanced\n"
+        "  help (aliases: h, ?)   - Show this help\n"
+        "  quit (alias: q)        - Exit\n"
         "\n"
         "Examples:\n"
-        "  generate\n"
-        "  op language_id_score_filter\n"
+        "  set dataset /data/support_tickets.jsonl\n"
+        "  set model_config /repo/models.yaml\n"
+        "  generate 清洗客服工单并去重\n"
         "  optimize\n"
     )
 
@@ -145,16 +341,15 @@ def build_status_line(
     )
 
 
-def _prompt_with_default(label: str, default: str) -> str:
-    """Prompt user with a default value and return selected text."""
-    suffix = f" [{default}]" if default else ""
-    value = _safe_input(f"{label}{suffix}: ")
-    if value is None:
-        raise EOFError
-    value = value.strip()
-    if value:
-        return value
-    return default
+def configure_runtime_environment() -> None:
+    """Reduce noisy logs/warnings for interactive terminal usage."""
+    warnings.filterwarnings(
+        "ignore",
+        message=r"invalid escape sequence.*",
+        category=SyntaxWarning,
+    )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("data_juicer").setLevel(logging.WARNING)
 
 
 def _safe_input(prompt: str) -> Optional[str]:
@@ -165,15 +360,16 @@ def _safe_input(prompt: str) -> Optional[str]:
         return None
 
 
-def configure_runtime_environment() -> None:
-    """Reduce noisy logs/warnings for interactive terminal usage."""
-    warnings.filterwarnings(
-        "ignore",
-        message=r"invalid escape sequence.*",
-        category=SyntaxWarning,
-    )
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("data_juicer").setLevel(logging.WARNING)
+def _prompt_with_default(label: str, default: str) -> Optional[str]:
+    """Prompt user with a default value and return selected text or None on EOF."""
+    suffix = f" [{default}]" if default else ""
+    value = _safe_input(f"{label}{suffix}: ")
+    if value is None:
+        return None
+    value = value.strip()
+    if value:
+        return value
+    return default
 
 
 def _print_response(result: Any) -> None:
@@ -288,122 +484,152 @@ def _suggestion_for_error(error: str) -> str:
     return "Review input values and retry; run `help` for command examples."
 
 
+def _build_form_from_context(ctx: SessionContext, intent: str) -> WorkflowFormData:
+    """Construct workflow form from current command context."""
+    return WorkflowFormData(
+        task_description=intent,
+        dataset_path=ctx.dataset_path,
+        optimization_preference=ctx.objective,
+        model_config_path=ctx.model_config_path,
+        llm_model=ctx.model,
+        llm_base_url=ctx.base_url,
+        llm_api_key=ctx.api_key,
+        max_iterations=ctx.max_iterations,
+    )
+
+
+def execute_command(
+    raw: str,
+    *,
+    ctx: SessionContext,
+    workflow: WorkflowScreen,
+    operator: OperatorScreen,
+    chat: ChatScreen,
+) -> Tuple[List[str], bool]:
+    """Execute one command and return output lines plus quit flag."""
+    command = normalize_command(raw)
+    if not command:
+        return ([], False)
+
+    if command == "help":
+        return (build_help_text().splitlines(), False)
+    if command == "quit":
+        return (["Goodbye."], True)
+
+    if command.startswith("set "):
+        parts = command.split(maxsplit=2)
+        if len(parts) < 3:
+            return (["[ERROR] Usage: set <dataset|model_config|model|objective> <value>"], False)
+        key = parts[1].strip()
+        value = parts[2].strip()
+        if key == "dataset":
+            validation_error = validate_dataset_path(value)
+            if validation_error is not None:
+                return ([f"[ERROR] {validation_error}"], False)
+            ctx.dataset_path = value
+            return ([f"[OK] dataset path set: {value}"], False)
+        if key == "model_config":
+            ctx.model_config_path = value
+            return ([f"[OK] model config set: {value}"], False)
+        if key == "model":
+            ctx.model = value
+            return ([f"[OK] model set: {value}"], False)
+        if key == "objective":
+            if value not in {"quality", "cost", "balanced"}:
+                return (["[ERROR] objective must be one of: quality, cost, balanced"], False)
+            ctx.objective = value
+            return ([f"[OK] objective set: {value}"], False)
+        return ([f"[ERROR] unsupported set target: {key}"], False)
+
+    if command == "ops":
+        return (render_response_lines(operator.list_operators()), False)
+
+    if command.startswith("op "):
+        name = command[3:].strip()
+        if not name:
+            return (["[ERROR] Usage: op <operator_name>"], False)
+        return (render_response_lines(operator.explain_operator(name)), False)
+
+    if command == "validate":
+        if not ctx.current_yaml:
+            return (["[ERROR] No YAML in session. Run generate first or set current YAML."], False)
+        return (render_response_lines(workflow.validate_yaml(ctx.current_yaml)), False)
+
+    if command == "optimize":
+        if not ctx.current_yaml:
+            return (["[ERROR] No YAML in session. Run generate first."], False)
+        form = _build_form_from_context(ctx, intent="")
+        result = workflow.submit_optimize(form, yaml_text=ctx.current_yaml)
+        if result.ok:
+            ctx.current_yaml = str(result.data.get("optimized_yaml", ctx.current_yaml))
+        return (render_response_lines(result), False)
+
+    if command.startswith("generate"):
+        intent = command[len("generate") :].strip()
+        if not intent:
+            return (["[ERROR] Usage: generate <natural-language-intent>"], False)
+        if not ctx.dataset_path:
+            return (["[ERROR] dataset path is unset. Use: set dataset <path>"], False)
+        form = _build_form_from_context(ctx, intent=intent)
+        result = workflow.submit_generate(form)
+        if result.ok:
+            ctx.current_yaml = str(result.data.get("yaml_text", ""))
+        return (render_response_lines(result), False)
+
+    if command.startswith("/"):
+        return (render_response_lines(chat.submit_message(command)), False)
+
+    return (["[ERROR] Unknown command. Type `help` for usage."], False)
+
+
 def run_interactive_cli(args: argparse.Namespace) -> int:
-    """Run a simple command-loop TUI for MVP usage."""
+    """Run plain prompt-loop UI (fallback and optional mode)."""
     configure_runtime_environment()
     app = AgentPlannerTUI()
     workflow = app.open_route("generate")
-    assert isinstance(workflow, WorkflowScreen)
     operator = app.open_route("operator")
-    assert isinstance(operator, OperatorScreen)
+    chat = app.open_route("chat")
 
-    current_yaml = ""
-    dataset_path_value = args.dataset_path
-    model_config_value = args.model_config_path
+    assert isinstance(workflow, WorkflowScreen)
+    assert isinstance(operator, OperatorScreen)
+    assert isinstance(chat, ChatScreen)
+
+    app.ctx.objective = args.objective
+    app.ctx.dataset_path = args.dataset_path
+    app.ctx.model_config_path = args.model_config_path
+    app.ctx.model = args.model
+    app.ctx.base_url = args.base_url
+    app.ctx.api_key = args.api_key
+    app.ctx.max_iterations = args.max_iterations
+
     print("Agentic Planner TUI ready")
     print("Type 'help' to see commands.")
-    print("Tip: use a JSONL file path for dataset_path, not a directory")
+    print("Tip: this plain mode supports one-line commands. Example: generate 清洗客服工单并去重")
+
     while True:
         print(
             build_status_line(
-                objective=args.objective,
-                dataset_path=dataset_path_value,
-                model_config_path=model_config_value,
-                model=args.model,
+                objective=app.ctx.objective,
+                dataset_path=app.ctx.dataset_path,
+                model_config_path=app.ctx.model_config_path,
+                model=app.ctx.model,
             )
         )
         raw_input = _safe_input("tui> ")
         if raw_input is None:
             print("\nExiting TUI (EOF).")
             return 0
-        raw = raw_input.strip()
-        command = normalize_command(raw)
-        if not command:
-            continue
-        if command == "help":
-            print(build_help_text())
-            continue
-        if command == "quit":
+        lines, should_quit = execute_command(
+            raw_input.strip(),
+            ctx=app.ctx,
+            workflow=workflow,
+            operator=operator,
+            chat=chat,
+        )
+        for line in lines:
+            print(line)
+        if should_quit:
             return 0
-        if command == "ops":
-            _print_response(operator.list_operators())
-            continue
-        if command.startswith("op "):
-            _print_response(operator.explain_operator(raw[3:].strip()))
-            continue
-        if command == "generate":
-            intent_input = _safe_input("intent> Describe your pipeline goal (natural language): ")
-            if intent_input is None:
-                print("\nGenerate cancelled (EOF).")
-                return 0
-            intent = intent_input.strip()
-            try:
-                while True:
-                    dataset_path = _prompt_with_default(
-                        "dataset_path> Input .jsonl file path",
-                        dataset_path_value,
-                    )
-                    validation_error = validate_dataset_path(dataset_path)
-                    if validation_error is None:
-                        dataset_path_value = dataset_path
-                        break
-                    print(f"[ERROR] {validation_error}")
-
-                model_config_path = _prompt_with_default(
-                    "model_config_path> models.yaml path (optional)",
-                    model_config_value,
-                )
-            except EOFError:
-                print("\nGenerate cancelled (EOF).")
-                return 0
-            model_config_value = model_config_path
-            form = WorkflowFormData(
-                task_description=intent,
-                dataset_path=dataset_path,
-                optimization_preference=args.objective,
-                model_config_path=model_config_path,
-                llm_model=args.model,
-                llm_base_url=args.base_url,
-                llm_api_key=args.api_key,
-                max_iterations=args.max_iterations,
-            )
-            result = workflow.submit_generate(form)
-            _print_response(result)
-            if result.ok:
-                current_yaml = str(result.data.get("yaml_text", ""))
-            continue
-        if command == "optimize":
-            if not current_yaml:
-                yaml_input = _safe_input("yaml_text_or_path> Provide YAML text or file path: ")
-                if yaml_input is None:
-                    print("\nOptimize cancelled (EOF).")
-                    return 0
-                current_yaml = yaml_input.strip()
-            form = WorkflowFormData(
-                task_description="",
-                dataset_path=dataset_path_value,
-                optimization_preference=args.objective,
-                model_config_path=model_config_value,
-                llm_model=args.model,
-                llm_base_url=args.base_url,
-                llm_api_key=args.api_key,
-                max_iterations=args.max_iterations,
-            )
-            result = workflow.submit_optimize(form, yaml_text=current_yaml)
-            _print_response(result)
-            if result.ok:
-                current_yaml = str(result.data.get("optimized_yaml", current_yaml))
-            continue
-        if command == "validate":
-            if not current_yaml:
-                yaml_input = _safe_input("yaml_text_or_path> Provide YAML text or file path: ")
-                if yaml_input is None:
-                    print("\nValidate cancelled (EOF).")
-                    return 0
-                current_yaml = yaml_input.strip()
-            _print_response(workflow.validate_yaml(current_yaml))
-            continue
-        print("Unknown command. Use: generate, optimize, ops, op <name>, validate, quit")
 
 
 def main() -> int:
@@ -411,6 +637,19 @@ def main() -> int:
     configure_runtime_environment()
     parser = _build_parser()
     args = parser.parse_args()
+
+    if TEXTUAL_AVAILABLE and not args.plain:
+        app = AgentPlannerTUI()
+        app.ctx.objective = args.objective
+        app.ctx.dataset_path = args.dataset_path
+        app.ctx.model_config_path = args.model_config_path
+        app.ctx.model = args.model
+        app.ctx.base_url = args.base_url
+        app.ctx.api_key = args.api_key
+        app.ctx.max_iterations = args.max_iterations
+        app.run()
+        return 0
+
     return run_interactive_cli(args)
 
 
