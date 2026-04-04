@@ -78,3 +78,26 @@ def test_test_llm_handles_exception():
         assert result.ok is False
         assert "LLM connection failed" in result.error
         assert "Connection failed" in result.error
+
+
+def test_test_llm_with_timeout_parameter():
+    """Test that test_llm uses a short timeout for faster feedback."""
+    from apps.webui.backend.service_bridge import ServiceBridge
+
+    bridge = ServiceBridge()
+
+    with patch("apps.webui.backend.service_bridge.OpenAICompatibleJsonClient") as mock_client_class:
+        mock_client = MagicMock()
+        mock_client.generate.return_value = "ok"
+        mock_client_class.return_value = mock_client
+
+        bridge.test_llm(
+            base_url="https://api.openai.com/v1",
+            api_key="test-key",
+            model="gpt-4",
+        )
+
+        mock_client_class.assert_called_once()
+        call_kwargs = mock_client_class.call_args[1]
+        assert "timeout_sec" in call_kwargs
+        assert call_kwargs["timeout_sec"] == 10.0

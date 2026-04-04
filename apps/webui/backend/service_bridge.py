@@ -33,6 +33,7 @@ class ServiceBridge:
                 model=model,
                 api_key=api_key,
                 base_url=base_url or "https://api.openai.com/v1",
+                timeout_sec=10.0,
             )
             result = client.generate(
                 system_prompt="You are a helpful assistant.",
