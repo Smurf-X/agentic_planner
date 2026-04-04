@@ -3,15 +3,17 @@ import { WorkflowForm } from './components/WorkflowForm';
 import { ResultPanel } from './components/ResultPanel';
 import { OperatorPanel } from './components/OperatorPanel';
 import { ValidatePanel } from './components/ValidatePanel';
+import { SettingsPanel } from './components/SettingsPanel';
 import { ModelConfig } from './api/client';
 import './styles.css';
 
-type Tab = 'workflow' | 'operators' | 'validate';
+type Tab = 'workflow' | 'operators' | 'validate' | 'settings';
 
 const tabs: { id: Tab; label: string; icon: string }[] = [
   { id: 'workflow', label: 'Workflow', icon: '⚡' },
   { id: 'operators', label: 'Operators', icon: '🔧' },
   { id: 'validate', label: 'Validate', icon: '✓' },
+  { id: 'settings', label: 'Settings', icon: '⚙️' },
 ];
 
 function App() {
@@ -69,12 +71,13 @@ function App() {
           {tab === 'workflow' && (
             <div className="workflow-layout">
               <div className="card workflow-card">
-                <WorkflowForm 
+                <WorkflowForm
                   onResult={setResult}
                   modelConfig={modelConfig}
                   llmTested={llmTested}
                   onModelConfigChange={setModelConfig}
                   onLLMTestedChange={setLLMTested}
+                  onNavigateToSettings={() => setTab('settings')}
                 />
               </div>
               <div className="card result-card">
@@ -92,6 +95,17 @@ function App() {
           {tab === 'validate' && (
             <div className="card full-height">
               <ValidatePanel />
+            </div>
+          )}
+
+          {tab === 'settings' && (
+            <div className="card full-height">
+              <SettingsPanel
+                modelConfig={modelConfig}
+                llmTested={llmTested}
+                onModelConfigChange={setModelConfig}
+                onLLMTestedChange={setLLMTested}
+              />
             </div>
           )}
         </div>

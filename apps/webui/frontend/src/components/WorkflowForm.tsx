@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { generate, optimize, testLLM, ModelConfig } from '../api/client';
+import { generate, optimize, ModelConfig } from '../api/client';
 
 interface WorkflowFormProps {
   onResult: (result: unknown) => void;
@@ -7,14 +7,16 @@ interface WorkflowFormProps {
   llmTested: boolean;
   onModelConfigChange: (config: ModelConfig) => void;
   onLLMTestedChange: (tested: boolean) => void;
+  onNavigateToSettings: () => void;
 }
 
-export function WorkflowForm({ 
-  onResult, 
-  modelConfig, 
-  llmTested, 
-  onModelConfigChange, 
-  onLLMTestedChange 
+export function WorkflowForm({
+  onResult,
+  modelConfig,
+  llmTested,
+  onModelConfigChange: _onModelConfigChange,
+  onLLMTestedChange: _onLLMTestedChange,
+  onNavigateToSettings,
 }: WorkflowFormProps) {
   const [mode, setMode] = useState<'generate' | 'optimize'>('generate');
   const [intent, setIntent] = useState('');
@@ -25,45 +27,10 @@ export function WorkflowForm({
   const [error, setError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [maxIterations, setMaxIterations] = useState(3);
-  const [llmTesting, setLLMTesting] = useState(false);
-  const [llmTestResult, setLLMTestResult] = useState<{ ok: boolean; message: string } | null>(null);
-
-  const handleTestLLM = async () => {
-    if (!modelConfig.model || !modelConfig.api_key) {
-      setLLMTestResult({ ok: false, message: 'Please fill in Model Name and API Key' });
-      return;
-    }
-
-    setLLMTesting(true);
-    setLLMTestResult(null);
-    try {
-      const result = await testLLM(modelConfig);
-      if (result.ok) {
-        onLLMTestedChange(true);
-        setLLMTestResult({ 
-          ok: true, 
-          message: `Connection successful! Model: ${result.data.model}` 
-        });
-      } else {
-        onLLMTestedChange(false);
-        setLLMTestResult({ 
-          ok: false, 
-          message: result.error || 'Connection failed' 
-        });
-      }
-    } catch (e) {
-      onLLMTestedChange(false);
-      setLLMTestResult({ 
-        ok: false, 
-        message: e instanceof Error ? e.message : 'Test failed' 
-      });
-    }
-    setLLMTesting(false);
-  };
 
   const handleGenerate = async () => {
     if (!llmTested) {
-      setError('Please test LLM connection first');
+      setError('Please test LLM connection first in Settings');
       return;
     }
     setLoading(true);
@@ -79,7 +46,7 @@ export function WorkflowForm({
 
   const handleOptimize = async () => {
     if (!llmTested) {
-      setError('Please test LLM connection first');
+      setError('Please test LLM connection first in Settings');
       return;
     }
     setLoading(true);
@@ -107,100 +74,58 @@ export function WorkflowForm({
         <p className="form-subtitle">Generate or optimize your data pipeline</p>
       </div>
 
+      <div
+        className="llm-status-indicator"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '10px 16px',
+          marginBottom: '16px',
+          borderRadius: '8px',
+          background: llmTested ? '#D1FAE5' : '#FEF2F2',
+          border: `1px solid ${llmTested ? '#A7F3D0' : '#FECACA'}`,
+          fontSize: '14px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {llmTested ? (
+            <>
+              <span style={{ color: '#10B981', fontWeight: '600' }}>✓</span>
+              <span style={{ fontWeight: '500' }}>LLM: Configured</span>
+              <span style={{ color: '#6B7280' }}>{modelConfig.model}</span>
+            </>
+          ) : (
+            <>
+              <span style={{ color: '#EF4444', fontWeight: '600' }}>✗</span>
+              <span style={{ fontWeight: '500', color: '#991B1B' }}>LLM: Not configured</span>
+            </>
+          )}
+        </div>
+        {!llmTested && (
+          <button
+            className="btn btn-secondary"
+            style={{ fontSize: '13px', padding: '6px 12px' }}
+            onClick={onNavigateToSettings}
+          >
+            Configure
+          </button>
+        )}
+      </div>
+
       <div className="mode-toggle">
-        <button 
+        <button
           className={`mode-btn ${mode === 'generate' ? 'active' : ''}`}
           onClick={() => setMode('generate')}
         >
           Generate
         </button>
-        <button 
+        <button
           className={`mode-btn ${mode === 'optimize' ? 'active' : ''}`}
           onClick={() => setMode('optimize')}
         >
           Optimize
         </button>
-      </div>
-
-      <div style={{ 
-        background: '#F0F9FF', 
-        border: '1px solid #BAE6FD', 
-        borderRadius: '10px', 
-        padding: '16px',
-        marginBottom: '20px'
-      }}>
-        <h4 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px', color: '#0369A1' }}>
-          LLM Configuration
-        </h4>
-        
-        <div className="form-group" style={{ marginBottom: '12px' }}>
-          <label className="form-label">Base URL</label>
-          <input
-            type="text"
-            className="form-input"
-            value={modelConfig.base_url}
-            onChange={(e) => { onModelConfigChange({ ...modelConfig, base_url: e.target.value }); onLLMTestedChange(false); }}
-            placeholder="https://api.openai.com/v1 (leave empty for OpenAI)"
-          />
-        </div>
-
-        <div className="form-group" style={{ marginBottom: '12px' }}>
-          <label className="form-label">
-            API Key <span style={{ color: '#EF4444' }}>*</span>
-          </label>
-          <input
-            type="password"
-            className="form-input"
-            value={modelConfig.api_key}
-            onChange={(e) => { onModelConfigChange({ ...modelConfig, api_key: e.target.value }); onLLMTestedChange(false); }}
-            placeholder="sk-..."
-          />
-        </div>
-
-        <div className="form-group" style={{ marginBottom: '12px' }}>
-          <label className="form-label">
-            Model Name <span style={{ color: '#EF4444' }}>*</span>
-          </label>
-          <input
-            type="text"
-            className="form-input"
-            value={modelConfig.model}
-            onChange={(e) => { onModelConfigChange({ ...modelConfig, model: e.target.value }); onLLMTestedChange(false); }}
-            placeholder="gpt-4o-mini"
-          />
-        </div>
-
-        <button 
-          className={`btn ${llmTested ? 'btn-secondary' : 'btn-primary'}`}
-          onClick={handleTestLLM}
-          disabled={llmTesting}
-          style={{ width: '100%' }}
-        >
-          {llmTesting ? (
-            <span className="loading">
-              <span className="spinner"></span>
-              Testing...
-            </span>
-          ) : llmTested ? (
-            'Test Again'
-          ) : (
-            'Test Connection'
-          )}
-        </button>
-
-        {llmTestResult && (
-          <div style={{ 
-            marginTop: '12px',
-            padding: '10px 12px',
-            borderRadius: '6px',
-            fontSize: '13px',
-            background: llmTestResult.ok ? '#D1FAE5' : '#FEF2F2',
-            color: llmTestResult.ok ? '#065F46' : '#991B1B',
-            border: `1px solid ${llmTestResult.ok ? '#A7F3D0' : '#FECACA'}`
-          }}>
-            {llmTestResult.ok ? '✓' : '✗'} {llmTestResult.message}
-          </div>
-        )}
       </div>
 
       {mode === 'generate' ? (
@@ -229,9 +154,9 @@ export function WorkflowForm({
               placeholder="/path/to/data.jsonl"
             />
           </div>
-          <button 
+          <button
             className="btn btn-primary submit-btn"
-            onClick={handleGenerate} 
+            onClick={handleGenerate}
             disabled={loading || !canSubmit}
           >
             {loading ? (
@@ -260,9 +185,9 @@ export function WorkflowForm({
           </div>
           <div className="form-group">
             <label className="form-label">Optimization Objective</label>
-            <select 
-              className="form-select" 
-              value={objective} 
+            <select
+              className="form-select"
+              value={objective}
               onChange={(e) => setObjective(e.target.value)}
             >
               <option value="quality">Quality - Maximize output quality</option>
@@ -272,7 +197,7 @@ export function WorkflowForm({
           </div>
 
           <div className="form-group">
-            <button 
+            <button
               className="btn btn-secondary"
               onClick={() => setShowAdvanced(!showAdvanced)}
               style={{ width: '100%', marginBottom: showAdvanced ? '12px' : '0' }}
@@ -295,9 +220,9 @@ export function WorkflowForm({
             </div>
           )}
 
-          <button 
+          <button
             className="btn btn-primary submit-btn"
-            onClick={handleOptimize} 
+            onClick={handleOptimize}
             disabled={loading || !canSubmit}
           >
             {loading ? (
