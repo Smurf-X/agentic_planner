@@ -32,11 +32,11 @@ class Router:
         return {}
 
     @staticmethod
-    def _coerce_required_text(payload: Mapping[str, Any], field: str) -> Union[str, ToolResponse]:
+    def _coerce_required_text(payload: Mapping[str, Any], field: str, default: str = "") -> Union[str, ToolResponse]:
         """Normalize required text fields while preserving explicit type errors."""
         raw_value = payload.get(field)
         if raw_value is None:
-            return ""
+            return default
         if isinstance(raw_value, str):
             return raw_value
         return error_response(
@@ -66,14 +66,15 @@ class Router:
             dataset_path = self._coerce_required_text(safe_payload, "dataset_path")
             if isinstance(dataset_path, ToolResponse):
                 return dataset_path
-            model_config_path = self._coerce_required_text(safe_payload, "model_config_path")
-            if isinstance(model_config_path, ToolResponse):
-                return model_config_path
+            llm_config_path = self._coerce_required_text(safe_payload, "model_config_path")
+            if isinstance(llm_config_path, ToolResponse):
+                return llm_config_path
             return generate_yaml_tool(
                 intent=intent,
                 dataset_path=dataset_path,
-                model_config_path=model_config_path,
+                llm_config_path=llm_config_path,
                 options=safe_options,
+                payload=safe_payload,
             )
 
         if action == "optimize":
@@ -83,14 +84,15 @@ class Router:
             objective = self._coerce_required_text(safe_payload, "objective")
             if isinstance(objective, ToolResponse):
                 return objective
-            model_config_path = self._coerce_required_text(safe_payload, "model_config_path")
-            if isinstance(model_config_path, ToolResponse):
-                return model_config_path
+            llm_config_path = self._coerce_required_text(safe_payload, "model_config_path")
+            if isinstance(llm_config_path, ToolResponse):
+                return llm_config_path
             return optimize_yaml_tool(
                 yaml_text_or_path=yaml_text_or_path,
                 objective=objective,
-                model_config_path=model_config_path,
+                llm_config_path=llm_config_path,
                 options=safe_options,
+                payload=safe_payload,
             )
 
         if action in {"list", "list_ops"}:
