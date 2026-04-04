@@ -40,78 +40,122 @@ export function WorkflowForm({ onResult }: WorkflowFormProps) {
   };
 
   return (
-    <div style={{ padding: '16px', border: '1px solid #ccc', borderRadius: '8px' }}>
-      <div style={{ marginBottom: '12px' }}>
-        <button onClick={() => setMode('generate')} style={{ marginRight: '8px', fontWeight: mode === 'generate' ? 'bold' : 'normal' }}>
+    <div className="form-section">
+      <div className="form-header">
+        <h3 className="form-title">Pipeline Configuration</h3>
+        <p className="form-subtitle">Generate or optimize your data pipeline</p>
+      </div>
+
+      <div className="mode-toggle">
+        <button 
+          className={`mode-btn ${mode === 'generate' ? 'active' : ''}`}
+          onClick={() => setMode('generate')}
+        >
           Generate
         </button>
-        <button onClick={() => setMode('optimize')} style={{ fontWeight: mode === 'optimize' ? 'bold' : 'normal' }}>
+        <button 
+          className={`mode-btn ${mode === 'optimize' ? 'active' : ''}`}
+          onClick={() => setMode('optimize')}
+        >
           Optimize
         </button>
       </div>
 
-      <div style={{ marginBottom: '12px' }}>
-        <label style={{ display: 'block', marginBottom: '4px' }}>Model Config Path:</label>
+      <div className="form-group">
+        <label className="form-label">Model Config Path</label>
         <input
           type="text"
+          className="form-input"
           value={modelConfigPath}
           onChange={(e) => setModelConfigPath(e.target.value)}
-          style={{ width: '100%', padding: '8px' }}
-          placeholder="e.g., /path/to/models.yaml"
+          placeholder="/path/to/models.yaml"
         />
       </div>
 
       {mode === 'generate' ? (
         <>
-          <div style={{ marginBottom: '12px' }}>
-            <label style={{ display: 'block', marginBottom: '4px' }}>Intent:</label>
+          <div className="form-group">
+            <label className="form-label">Intent</label>
             <textarea
+              className="form-textarea"
               value={intent}
               onChange={(e) => setIntent(e.target.value)}
-              style={{ width: '100%', padding: '8px', minHeight: '60px' }}
-              placeholder="Describe what you want to do..."
+              placeholder="Describe your data processing pipeline in natural language..."
+              rows={4}
             />
           </div>
-          <div style={{ marginBottom: '12px' }}>
-            <label style={{ display: 'block', marginBottom: '4px' }}>Dataset Path:</label>
+          <div className="form-group">
+            <label className="form-label">Dataset Path</label>
             <input
               type="text"
+              className="form-input"
               value={datasetPath}
               onChange={(e) => setDatasetPath(e.target.value)}
-              style={{ width: '100%', padding: '8px' }}
-              placeholder="e.g., /path/to/data.jsonl"
+              placeholder="/path/to/data.jsonl"
             />
           </div>
-          <button onClick={handleGenerate} disabled={loading || !intent || !datasetPath || !modelConfigPath}>
-            {loading ? 'Generating...' : 'Generate YAML'}
+          <button 
+            className="btn btn-primary submit-btn"
+            onClick={handleGenerate} 
+            disabled={loading || !intent || !datasetPath || !modelConfigPath}
+          >
+            {loading ? (
+              <span className="loading">
+                <span className="spinner"></span>
+                Generating...
+              </span>
+            ) : (
+              'Generate Pipeline'
+            )}
           </button>
         </>
       ) : (
         <>
-          <div style={{ marginBottom: '12px' }}>
-            <label style={{ display: 'block', marginBottom: '4px' }}>YAML Content or Path:</label>
+          <div className="form-group">
+            <label className="form-label">YAML Configuration</label>
             <textarea
+              className="form-textarea"
               value={yamlText}
               onChange={(e) => setYamlText(e.target.value)}
-              style={{ width: '100%', padding: '8px', minHeight: '100px' }}
-              placeholder="Paste YAML or provide file path..."
+              placeholder="Paste your YAML configuration or provide a file path..."
+              rows={6}
             />
           </div>
-          <div style={{ marginBottom: '12px' }}>
-            <label style={{ display: 'block', marginBottom: '4px' }}>Objective:</label>
-            <select value={objective} onChange={(e) => setObjective(e.target.value)} style={{ padding: '8px' }}>
-              <option value="quality">Quality</option>
-              <option value="cost">Cost</option>
-              <option value="balanced">Balanced</option>
+          <div className="form-group">
+            <label className="form-label">Optimization Objective</label>
+            <select 
+              className="form-select" 
+              value={objective} 
+              onChange={(e) => setObjective(e.target.value)}
+            >
+              <option value="quality">Quality - Maximize output quality</option>
+              <option value="cost">Cost - Minimize resource usage</option>
+              <option value="balanced">Balanced - Trade-off optimization</option>
             </select>
           </div>
-          <button onClick={handleOptimize} disabled={loading || !yamlText || !modelConfigPath}>
-            {loading ? 'Optimizing...' : 'Optimize YAML'}
+          <button 
+            className="btn btn-primary submit-btn"
+            onClick={handleOptimize} 
+            disabled={loading || !yamlText || !modelConfigPath}
+          >
+            {loading ? (
+              <span className="loading">
+                <span className="spinner"></span>
+                Optimizing...
+              </span>
+            ) : (
+              'Optimize Pipeline'
+            )}
           </button>
         </>
       )}
 
-      {error && <div style={{ color: 'red', marginTop: '12px' }}>{error}</div>}
+      {error && (
+        <div className="result-error" style={{ marginTop: '16px' }}>
+          <div className="result-error-title">Error</div>
+          <div className="result-error-text">{error}</div>
+        </div>
+      )}
     </div>
   );
 }
