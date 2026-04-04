@@ -3,6 +3,7 @@ import { WorkflowForm } from './components/WorkflowForm';
 import { ResultPanel } from './components/ResultPanel';
 import { OperatorPanel } from './components/OperatorPanel';
 import { ValidatePanel } from './components/ValidatePanel';
+import { ModelConfig } from './api/client';
 import './styles.css';
 
 type Tab = 'workflow' | 'operators' | 'validate';
@@ -16,6 +17,12 @@ const tabs: { id: Tab; label: string; icon: string }[] = [
 function App() {
   const [tab, setTab] = useState<Tab>('workflow');
   const [result, setResult] = useState<unknown | null>(null);
+  const [modelConfig, setModelConfig] = useState<ModelConfig>({
+    base_url: '',
+    api_key: '',
+    model: '',
+  });
+  const [llmTested, setLLMTested] = useState(false);
 
   return (
     <div className="app-container">
@@ -62,7 +69,13 @@ function App() {
           {tab === 'workflow' && (
             <div className="workflow-layout">
               <div className="card workflow-card">
-                <WorkflowForm onResult={setResult} />
+                <WorkflowForm 
+                  onResult={setResult}
+                  modelConfig={modelConfig}
+                  llmTested={llmTested}
+                  onModelConfigChange={setModelConfig}
+                  onLLMTestedChange={setLLMTested}
+                />
               </div>
               <div className="card result-card">
                 <ResultPanel result={result} />

@@ -1,27 +1,75 @@
 import { useState } from 'react';
-import { generate, optimize } from '../api/client';
+import { generate, optimize, testLLM, ModelConfig } from '../api/client';
 
 interface WorkflowFormProps {
   onResult: (result: unknown) => void;
+  modelConfig: ModelConfig;
+  llmTested: boolean;
+  onModelConfigChange: (config: ModelConfig) => void;
+  onLLMTestedChange: (tested: boolean) => void;
 }
 
-export function WorkflowForm({ onResult }: WorkflowFormProps) {
+export function WorkflowForm({ 
+  onResult, 
+  modelConfig, 
+  llmTested, 
+  onModelConfigChange, 
+  onLLMTestedChange 
+}: WorkflowFormProps) {
   const [mode, setMode] = useState<'generate' | 'optimize'>('generate');
   const [intent, setIntent] = useState('');
   const [datasetPath, setDatasetPath] = useState('');
-  const [modelConfigPath, setModelConfigPath] = useState('');
   const [yamlText, setYamlText] = useState('');
   const [objective, setObjective] = useState('quality');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [maxIterations, setMaxIterations] = useState(3);
+  const [llmTesting, setLLMTesting] = useState(false);
+  const [llmTestResult, setLLMTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  const handleTestLLM = async () => {
+    if (!modelConfig.model || !modelConfig.api_key) {
+      setLLMTestResult({ ok: false, message: 'Please fill in Model Name and API Key' });
+      return;
+    }
+
+    setLLMTesting(true);
+    setLLMTestResult(null);
+    try {
+      const result = await testLLM(modelConfig);
+      if (result.ok) {
+        onLLMTestedChange(true);
+        setLLMTestResult({ 
+          ok: true, 
+          message: `Connection successful! Model: ${result.data.model}` 
+        });
+      } else {
+        onLLMTestedChange(false);
+        setLLMTestResult({ 
+          ok: false, 
+          message: result.error || 'Connection failed' 
+        });
+      }
+    } catch (e) {
+      onLLMTestedChange(false);
+      setLLMTestResult({ 
+        ok: false, 
+        message: e instanceof Error ? e.message : 'Test failed' 
+      });
+    }
+    setLLMTesting(false);
+  };
 
   const handleGenerate = async () => {
+    if (!llmTested) {
+      setError('Please test LLM connection first');
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      const result = await generate(intent, datasetPath, modelConfigPath);
+      const result = await generate(intent, datasetPath, modelConfig);
       onResult(result);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Generate failed');
@@ -30,10 +78,14 @@ export function WorkflowForm({ onResult }: WorkflowFormProps) {
   };
 
   const handleOptimize = async () => {
+    if (!llmTested) {
+      setError('Please test LLM connection first');
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      const result = await optimize(yamlText, objective, modelConfigPath, {
+      const result = await optimize(yamlText, objective, modelConfig, {
         max_iterations: maxIterations,
       });
       onResult(result);
@@ -42,6 +94,11 @@ export function WorkflowForm({ onResult }: WorkflowFormProps) {
     }
     setLoading(false);
   };
+
+  const canSubmit = llmTested && (
+    (mode === 'generate' && intent && datasetPath) ||
+    (mode === 'optimize' && yamlText)
+  );
 
   return (
     <div className="form-section">
@@ -65,20 +122,85 @@ export function WorkflowForm({ onResult }: WorkflowFormProps) {
         </button>
       </div>
 
-      <div className="form-group">
-        <label className="form-label">
-          Model Config Path <span style={{ color: '#EF4444' }}>*</span>
-        </label>
-        <input
-          type="text"
-          className="form-input"
-          value={modelConfigPath}
-          onChange={(e) => setModelConfigPath(e.target.value)}
-          placeholder="/path/to/models.yaml (required for LLM calls)"
-        />
-        <p style={{ fontSize: '12px', color: '#6B7280', marginTop: '4px' }}>
-          YAML file containing LLM model configurations (api_key, base_url, model name)
-        </p>
+      <div style={{ 
+        background: '#F0F9FF', 
+        border: '1px solid #BAE6FD', 
+        borderRadius: '10px', 
+        padding: '16px',
+        marginBottom: '20px'
+      }}>
+        <h4 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px', color: '#0369A1' }}>
+          LLM Configuration
+        </h4>
+        
+        <div className="form-group" style={{ marginBottom: '12px' }}>
+          <label className="form-label">Base URL</label>
+          <input
+            type="text"
+            className="form-input"
+            value={modelConfig.base_url}
+            onChange={(e) => { onModelConfigChange({ ...modelConfig, base_url: e.target.value }); onLLMTestedChange(false); }}
+            placeholder="https://api.openai.com/v1 (leave empty for OpenAI)"
+          />
+        </div>
+
+        <div className="form-group" style={{ marginBottom: '12px' }}>
+          <label className="form-label">
+            API Key <span style={{ color: '#EF4444' }}>*</span>
+          </label>
+          <input
+            type="password"
+            className="form-input"
+            value={modelConfig.api_key}
+            onChange={(e) => { onModelConfigChange({ ...modelConfig, api_key: e.target.value }); onLLMTestedChange(false); }}
+            placeholder="sk-..."
+          />
+        </div>
+
+        <div className="form-group" style={{ marginBottom: '12px' }}>
+          <label className="form-label">
+            Model Name <span style={{ color: '#EF4444' }}>*</span>
+          </label>
+          <input
+            type="text"
+            className="form-input"
+            value={modelConfig.model}
+            onChange={(e) => { onModelConfigChange({ ...modelConfig, model: e.target.value }); onLLMTestedChange(false); }}
+            placeholder="gpt-4o-mini"
+          />
+        </div>
+
+        <button 
+          className={`btn ${llmTested ? 'btn-secondary' : 'btn-primary'}`}
+          onClick={handleTestLLM}
+          disabled={llmTesting}
+          style={{ width: '100%' }}
+        >
+          {llmTesting ? (
+            <span className="loading">
+              <span className="spinner"></span>
+              Testing...
+            </span>
+          ) : llmTested ? (
+            'Test Again'
+          ) : (
+            'Test Connection'
+          )}
+        </button>
+
+        {llmTestResult && (
+          <div style={{ 
+            marginTop: '12px',
+            padding: '10px 12px',
+            borderRadius: '6px',
+            fontSize: '13px',
+            background: llmTestResult.ok ? '#D1FAE5' : '#FEF2F2',
+            color: llmTestResult.ok ? '#065F46' : '#991B1B',
+            border: `1px solid ${llmTestResult.ok ? '#A7F3D0' : '#FECACA'}`
+          }}>
+            {llmTestResult.ok ? '✓' : '✗'} {llmTestResult.message}
+          </div>
+        )}
       </div>
 
       {mode === 'generate' ? (
@@ -110,7 +232,7 @@ export function WorkflowForm({ onResult }: WorkflowFormProps) {
           <button 
             className="btn btn-primary submit-btn"
             onClick={handleGenerate} 
-            disabled={loading || !intent || !datasetPath || !modelConfigPath}
+            disabled={loading || !canSubmit}
           >
             {loading ? (
               <span className="loading">
@@ -132,7 +254,7 @@ export function WorkflowForm({ onResult }: WorkflowFormProps) {
               className="form-textarea"
               value={yamlText}
               onChange={(e) => setYamlText(e.target.value)}
-              placeholder="Paste your YAML configuration or provide a file path..."
+              placeholder="Paste your YAML configuration..."
               rows={6}
             />
           </div>
@@ -170,16 +292,13 @@ export function WorkflowForm({ onResult }: WorkflowFormProps) {
                 min={1}
                 max={20}
               />
-              <p style={{ fontSize: '12px', color: '#6B7280', marginTop: '4px' }}>
-                Number of MCTS search iterations (higher = more thorough but slower)
-              </p>
             </div>
           )}
 
           <button 
             className="btn btn-primary submit-btn"
             onClick={handleOptimize} 
-            disabled={loading || !yamlText || !modelConfigPath}
+            disabled={loading || !canSubmit}
           >
             {loading ? (
               <span className="loading">
