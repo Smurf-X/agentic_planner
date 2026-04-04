@@ -8,6 +8,12 @@ interface ToolResponse {
   token_usage?: Record<string, unknown>;
 }
 
+export interface ModelConfig {
+  base_url: string;
+  api_key: string;
+  model: string;
+}
+
 interface GenerateOptions {
   use_real_generator?: boolean;
   retrieval_mode?: 'none' | 'bm25' | 'vector';
@@ -28,17 +34,28 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  return resp.json();
+  
+  const text = await resp.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {
+      ok: false,
+      error: `Server returned non-JSON response: ${text.substring(0, 200)}`,
+      data: {},
+      timing_ms: 0,
+    } as T;
+  }
 }
 
-export async function dispatch(action: string, payload: Record<string, unknown>): Promise<ToolResponse> {
-  return post<ToolResponse>('/dispatch', { action, payload });
+export async function testLLM(config: ModelConfig): Promise<ToolResponse> {
+  return post<ToolResponse>('/test_llm', config);
 }
 
 export async function generate(
   intent: string, 
   dataset_path: string, 
-  model_config_path: string, 
+  llm_config: ModelConfig,
   options?: GenerateOptions
 ): Promise<ToolResponse> {
   const fullOptions: GenerateOptions = {
@@ -50,7 +67,8 @@ export async function generate(
   return post<ToolResponse>('/generate', { 
     intent, 
     dataset_path, 
-    model_config_path, 
+    llm_config,
+    model_config_path: '',
     options: fullOptions 
   });
 }
@@ -58,7 +76,7 @@ export async function generate(
 export async function optimize(
   yaml_text_or_path: string, 
   objective: string, 
-  model_config_path: string, 
+  llm_config: ModelConfig,
   options?: OptimizeOptions
 ): Promise<ToolResponse> {
   const fullOptions: OptimizeOptions = {
@@ -71,7 +89,8 @@ export async function optimize(
   return post<ToolResponse>('/optimize', { 
     yaml_text_or_path, 
     objective, 
-    model_config_path, 
+    llm_config,
+    model_config_path: '',
     options: fullOptions 
   });
 }
