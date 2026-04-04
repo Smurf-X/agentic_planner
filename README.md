@@ -184,6 +184,34 @@ agentic_planner/
 └── __init__.py
 ```
 
+## WebUI Usage
+
+Start the backend server:
+
+```bash
+pip install -e ".[webui]"
+uvicorn apps.webui.backend.main:app --reload --port 8000
+```
+
+Start the frontend development server:
+
+```bash
+cd apps/webui/frontend
+npm install
+npm run dev
+```
+
+Open http://localhost:3000 in your browser.
+
+### API Endpoints
+
+- `POST /api/generate` - Generate YAML from natural language intent
+- `POST /api/optimize` - Optimize existing YAML configuration
+- `POST /api/validate` - Validate YAML configuration
+- `POST /api/list_ops` - List available operators
+- `POST /api/explain_op` - Get details for a specific operator
+- `POST /api/dispatch` - Generic dispatch endpoint for any action
+
 ## Development
 
 ```bash

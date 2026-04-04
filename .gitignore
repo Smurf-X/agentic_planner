@@ -69,3 +69,7 @@ test_dj2.yaml
 
 # Private local design notes
 docs/private/
+
+# Frontend build artifacts
+apps/webui/frontend/node_modules/
+apps/webui/frontend/dist/
