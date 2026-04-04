@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Optional
 
 from agentic_planner.contracts.recipe import DJExecutableConfig
 from agentic_planner.optimizer.directives.base import Directive, DirectiveResult
@@ -39,7 +39,7 @@ class RewritePromptDirective(Directive):
 
     def __init__(
         self,
-        locator: OpLocator,
+        locator: Optional[OpLocator] = None,
         new_prompt: Optional[str] = None,
         prompt_suffix: Optional[str] = None,
         clarify_instruction: Optional[str] = None,
@@ -65,7 +65,7 @@ class RewritePromptDirective(Directive):
         before = self._clone(cfg)
 
         target_idx = target_op
-        if target_idx is None:
+        if target_idx is None and self.locator is not None:
             target_idx = self.locator.find_index(index.identities)
         if target_idx is None:
             return DirectiveResult(
@@ -125,6 +125,8 @@ class RewritePromptDirective(Directive):
 
         identity = index.get_by_index(target_idx)
 
+        new_prompt_value = str(new_params.get(prompt_key, ""))
+
         return DirectiveResult(
             ok=True,
             applied=True,
@@ -133,105 +135,18 @@ class RewritePromptDirective(Directive):
             config_before=before,
             config_after=after,
             details={
+                "action_type": "prompt_rewrite",
                 "identity_hash": identity.identity_hash if identity else None,
+                "operator_id": identity.operator_id if identity else None,
                 "op_type": op_name,
+                "prompt_key": prompt_key,
+                "prompt_before_chars": len(old_prompt),
+                "prompt_after_chars": len(new_prompt_value),
                 "old_prompt_preview": old_prompt[:100] + "..."
                 if len(old_prompt) > 100
                 else old_prompt,
-            },
-        )
-
-
-class AddFewShotExamplesDirective(Directive):
-    """
-    Add few-shot examples to an LLM operator's prompt.
-
-    Uses OpLocator for stable identification.
-    """
-
-    name = "add_few_shot_examples"
-    applicable_op_types = list(_LLM_PROMPT_OPS.keys())
-
-    def __init__(self, locator: OpLocator, examples: List[Dict[str, str]]) -> None:
-        """
-        Args:
-            locator: Locator for the target operator
-            examples: List of example dicts with 'input' and 'output' keys
-        """
-        self.locator = locator
-        self.examples = examples
-
-    def apply_with_index(
-        self,
-        cfg: DJExecutableConfig,
-        index: ProcessIndex,
-        target_op: Optional[int] = None,
-    ) -> DirectiveResult:
-        before = self._clone(cfg)
-
-        if not self.examples:
-            return DirectiveResult(
-                ok=True,
-                applied=False,
-                directive_name=self.name,
-                message="no examples provided",
-                config_before=before,
-                config_after=before,
-            )
-
-        target_idx = target_op
-        if target_idx is None:
-            target_idx = self.locator.find_index(index.identities)
-        if target_idx is None:
-            return DirectiveResult(
-                ok=False,
-                applied=False,
-                directive_name=self.name,
-                message="target operator not found",
-                config_before=before,
-                config_after=before,
-            )
-
-        after = self._clone(before)
-        step = after["process"][target_idx]
-
-        op_name, params = self._get_op_params(step)
-        if op_name is None:
-            return DirectiveResult(
-                ok=True,
-                applied=False,
-                directive_name=self.name,
-                message="invalid step format",
-                config_before=before,
-                config_after=before,
-            )
-
-        prompt_key = _LLM_PROMPT_OPS.get(op_name, "prompt")
-        old_prompt = params.get(prompt_key, "")
-        new_params = dict(params)
-
-        examples_text = "\n\n## Examples:\n"
-        for i, ex in enumerate(self.examples, 1):
-            inp = ex.get("input", "")
-            out = ex.get("output", "")
-            examples_text += f"\n### Example {i}:\n"
-            examples_text += f"Input: {inp}\n"
-            examples_text += f"Output: {out}\n"
-
-        new_params[prompt_key] = old_prompt + examples_text
-        after["process"][target_idx] = {op_name: new_params}
-
-        identity = index.get_by_index(target_idx)
-
-        return DirectiveResult(
-            ok=True,
-            applied=True,
-            directive_name=self.name,
-            message=f"added {len(self.examples)} example(s) to {op_name}",
-            config_before=before,
-            config_after=after,
-            details={
-                "identity_hash": identity.identity_hash if identity else None,
-                "examples_count": len(self.examples),
+                "new_prompt_preview": new_prompt_value[:100] + "..."
+                if len(new_prompt_value) > 100
+                else new_prompt_value,
             },
         )

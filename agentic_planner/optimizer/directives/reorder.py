@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from agentic_planner.contracts.recipe import DJExecutableConfig
 from agentic_planner.optimizer.directives.base import Directive, DirectiveResult
@@ -65,6 +65,10 @@ class ReorderFiltersFirstDirective(Directive):
     name = "reorder_filters_first"
     applicable_op_types = None
 
+    def __init__(self, local_only: bool = False) -> None:
+        """Initialize reorder behavior mode."""
+        self.local_only = local_only
+
     def apply_with_index(
         self,
         cfg: DJExecutableConfig,
@@ -85,7 +89,7 @@ class ReorderFiltersFirstDirective(Directive):
             )
 
         # Build indexed list with priorities
-        indexed: List[tuple[int, int, Dict[str, Any]]] = []
+        indexed: List[Tuple[int, int, Dict[str, Any]]] = []
         for i, step in enumerate(proc):
             if not isinstance(step, dict) or len(step) != 1:
                 continue
@@ -105,7 +109,10 @@ class ReorderFiltersFirstDirective(Directive):
             )
 
         # Sort by priority (then by original index for stability)
-        indexed.sort(key=lambda x: (x[0], x[1]))
+        if self.local_only:
+            indexed = self._reorder_locally(indexed)
+        else:
+            indexed.sort(key=lambda x: (x[0], x[1]))
         new_proc = [x[2] for x in indexed]
         after = self._clone(before)
         after["process"] = new_proc
@@ -115,13 +122,35 @@ class ReorderFiltersFirstDirective(Directive):
             ok=True,
             applied=changed,
             directive_name=self.name,
-            message="reordered by type priority" if changed else "already ordered",
+            message=(
+                "reordered by local priority swaps"
+                if changed and self.local_only
+                else "reordered by type priority"
+                if changed
+                else "already ordered"
+            ),
             config_before=before,
             config_after=after,
             details={
                 "priorities": [(x[2], x[0]) for x in indexed],
+                "local_only": self.local_only,
                 "order_before": [
                     index.identities[i].identity_hash for i in range(len(index.identities))
                 ],
             },
         )
+
+    def _reorder_locally(
+        self,
+        indexed: List[Tuple[int, int, Dict[str, Any]]],
+    ) -> List[Tuple[int, int, Dict[str, Any]]]:
+        """Reorder with adjacent swaps only for safer local movement."""
+        reordered = list(indexed)
+        for i in range(len(reordered) - 1):
+            left = reordered[i]
+            right = reordered[i + 1]
+
+            # Only move a filter one step earlier over non-filter operators.
+            if left[0] > right[0] and right[0] == _TYPE_PRIORITY["filter"]:
+                reordered[i], reordered[i + 1] = right, left
+        return reordered

@@ -95,18 +95,18 @@ from agentic_planner.optimizer.directives import (
 # Optimizer - Search
 from agentic_planner.optimizer.search import (
     BaseSearchStrategy,
+    create_search_strategy,
+    GreedySearchConfig,
+    GreedySearchStrategy,
+    MOARSearchConfig,
+    MOARSearchStrategy,
     OptimizationObjective,
+    RandomSearchConfig,
+    RandomSearchStrategy,
     SearchConfig,
     SearchReport,
     SearchResult,
     SearchStrategyType,
-    GreedySearchConfig,
-    GreedySearchStrategy,
-    RandomSearchConfig,
-    RandomSearchStrategy,
-    BeamSearchConfig,
-    BeamSearchStrategy,
-    create_search_strategy,
 )
 
 __all__ = [
@@ -171,7 +171,7 @@ __all__ = [
     "GreedySearchStrategy",
     "RandomSearchConfig",
     "RandomSearchStrategy",
-    "BeamSearchConfig",
-    "BeamSearchStrategy",
+    "MOARSearchConfig",
+    "MOARSearchStrategy",
     "create_search_strategy",
 ]

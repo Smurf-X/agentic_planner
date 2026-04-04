@@ -34,6 +34,7 @@ dependencies = [
     "pydantic>=2.0",
     "pyyaml>=6.0",
     "httpx>=0.24.0",
+    "openai>=1.0.0",
     "rank-bm25>=0.2.2",
     "numpy>=1.20.0",
 ]
@@ -53,9 +54,13 @@ vector = [
 jieba = [
     "jieba>=0.42.0",
 ]
+tui = [
+    "textual>=0.60.0",
+]
 all = [
     "sentence-transformers>=2.0.0",
     "jieba>=0.42.0",
+    "textual>=0.60.0",
 ]
 
 [project.urls]
@@ -65,7 +70,7 @@ Repository = "https://github.com/modelscope/data-juicer"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["agentic_planner*"]
+include = ["agentic_planner*", "agent_runtime*", "apps", "apps.*"]
 
 [tool.setuptools.package-data]
 agentic_planner = ["py.typed"]

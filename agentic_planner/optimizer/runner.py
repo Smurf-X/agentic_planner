@@ -8,6 +8,7 @@ This module provides the high-level API for running pipeline optimization:
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -21,8 +22,11 @@ from agentic_planner.optimizer.directive_engine import (
     DirectiveEngineRun,
 )
 from agentic_planner.optimizer.evaluator import PipelineEvaluator, StubPipelineEvaluator
-from agentic_planner.optimizer.optimization_config import OptimizationConfig
-from agentic_planner.optimizer.search.beam import BeamSearchConfig, BeamSearchOptimizer
+from agentic_planner.optimizer.optimization_config import (
+    OptimizationConfig,
+    SearchExecutionBoundaryConfig,
+)
+from agentic_planner.optimizer.search.moar import MOARSearchConfig, MOARSearchStrategy
 
 CandidateRecord = Any  # Type alias for dynamic candidate objects
 
@@ -66,7 +70,7 @@ class OptimizationRunnerResult:
 
 class OptimizationRunner:
     """
-    High-level API combining stage-1 directives and stage-2 beam search.
+    High-level API combining stage-1 directives and stage-2 MOAR search.
 
     Usage:
         # Simple directive-only optimization
@@ -84,7 +88,9 @@ class OptimizationRunner:
         *,
         mode: OptimizationRunMode = OptimizationRunMode.DIRECTIVE_ONLY,
         directive_config: Optional[Dict[str, Any]] = None,
-        beam_config: Optional[Dict[str, Any]] = None,
+        moar_config: Optional[Dict[str, Any]] = None,
+        search_config: Optional[Dict[str, Any]] = None,
+        search_execution_boundary_config: Optional[Dict[str, Any]] = None,
         evaluator: Optional[PipelineEvaluator] = None,
         llm_client: Optional["BaseLLMClient"] = None,
         executor_adapter: Optional["ExecutorAdapter"] = None,
@@ -95,7 +101,9 @@ class OptimizationRunner:
         Args:
             mode: Which optimization stages to run
             directive_config: Configuration for directive engine
-            beam_config: Configuration for beam search
+            moar_config: Configuration for MOAR search
+            search_config: Legacy alias for moar_config
+            search_execution_boundary_config: Runtime boundary settings for search runs
             evaluator: Evaluator for quality scoring
             llm_client: LLM client for inference and judging
             executor_adapter: Adapter for running pipelines
@@ -104,7 +112,9 @@ class OptimizationRunner:
         """
         self.mode = mode
         self._directive_cfg = directive_config or {}
-        self._beam_cfg = beam_config or {}
+        normalized_search_config = moar_config if moar_config is not None else search_config
+        self._moar_cfg = normalized_search_config or {}
+        self._search_execution_boundary_cfg = search_execution_boundary_config or {}
         self._evaluator = evaluator or StubPipelineEvaluator()
         self._llm_client = llm_client
         self._executor_adapter = executor_adapter
@@ -143,7 +153,8 @@ class OptimizationRunner:
         return cls(
             mode=OptimizationRunMode(config.run_mode),
             directive_config=config.directive.model_dump(),
-            beam_config=config.search.model_dump() if config.search else None,
+            moar_config=config.search.model_dump() if config.search else None,
+            search_execution_boundary_config=config.search_execution_boundary.model_dump(),
             evaluator=evaluator,
             llm_client=llm_client,
             executor_adapter=executor_adapter,
@@ -192,32 +203,33 @@ class OptimizationRunner:
             OptimizationRunMode.SEARCH_ONLY,
             OptimizationRunMode.DIRECTIVE_THEN_SEARCH,
         ):
-            if not self._beam_cfg:
-                errors.append("Search mode requires beam_config")
-            else:
-                beam = BeamSearchOptimizer(
-                    BeamSearchConfig.model_validate(self._beam_cfg),
-                    evaluator=self._evaluator,
-                )
-                candidates = beam.search(current)
+            current = self._apply_search_execution_boundary(current)
+            strategy = MOARSearchStrategy(
+                MOARSearchConfig.model_validate(self._moar_cfg),
+                evaluator=self._evaluator,
+            )
+            report = strategy.search(current)
+            if not report.ok:
+                errors.extend(report.errors)
+            candidates = report.candidates
 
-                # Find best candidate
-                best = max(candidates, key=lambda c: c.quality) if candidates else None
+            # Find best candidate
+            best = max(candidates, key=lambda c: c.quality) if candidates else None
 
-                # Save results if output_dir is set
-                if self._output_dir and best:
-                    self._save_results(best)
+            # Save results if output_dir is set
+            if self._output_dir and best:
+                self._save_results(best)
 
-                return OptimizationRunnerResult(
-                    mode=self.mode,
-                    ok=len(errors) == 0,
-                    directive=dir_run,
-                    candidates=candidates,
-                    best_config=best.config if best else current,
-                    best_quality=best.quality if best else 0.0,
-                    best_cost=best.cost if best else None,
-                    errors=errors,
-                )
+            return OptimizationRunnerResult(
+                mode=self.mode,
+                ok=len(errors) == 0,
+                directive=dir_run,
+                candidates=candidates,
+                best_config=best.config if best else current,
+                best_quality=best.quality if best else 0.0,
+                best_cost=best.cost if best else None,
+                errors=errors,
+            )
 
         # Directive-only result
         if self._output_dir and dir_run:
@@ -287,6 +299,16 @@ class OptimizationRunner:
         with path.open("w", encoding="utf-8") as f:
             json.dump(trace_data, f, ensure_ascii=False, indent=2)
 
+    def _apply_search_execution_boundary(self, cfg: DJExecutableConfig) -> DJExecutableConfig:
+        """Apply deterministic DJ runtime boundaries before search evaluation."""
+        boundary = SearchExecutionBoundaryConfig.model_validate(self._search_execution_boundary_cfg)
+        runtime_overrides = boundary.to_runtime_overrides()
+
+        bounded_cfg = deepcopy(cfg)
+        for key, value in runtime_overrides.items():
+            bounded_cfg[key] = value
+        return bounded_cfg
+
 
 # Convenience functions
 
@@ -323,9 +345,8 @@ def optimize_pipeline(
 def optimize_with_search(
     cfg: DJExecutableConfig,
     evaluator: PipelineEvaluator,
-    beam_width: int = 4,
     max_iterations: int = 3,
-    expansion_directives: Optional[List[str]] = None,
+    max_evaluations: int = 100,
 ) -> OptimizationRunnerResult:
     """
     Run search-based optimization.
@@ -333,9 +354,8 @@ def optimize_with_search(
     Args:
         cfg: Pipeline configuration
         evaluator: Evaluator for quality scoring
-        beam_width: Number of candidates to keep
         max_iterations: Maximum search iterations
-        expansion_directives: Directives for neighbor generation
+        max_evaluations: Maximum evaluated candidates
 
     Returns:
         OptimizationRunnerResult
@@ -343,10 +363,9 @@ def optimize_with_search(
     runner = OptimizationRunner(
         mode=OptimizationRunMode.SEARCH_ONLY,
         evaluator=evaluator,
-        beam_config={
-            "beam_width": beam_width,
+        moar_config={
             "max_iterations": max_iterations,
-            "expansion_directives": expansion_directives or ["tighten_filters", "loosen_filters"],
+            "max_evaluations": max_evaluations,
         },
     )
     return runner.run(cfg)

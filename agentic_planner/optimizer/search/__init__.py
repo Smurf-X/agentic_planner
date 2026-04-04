@@ -5,7 +5,7 @@ Search strategies for pipeline optimization.
 This module provides pluggable search strategies:
 - Greedy: Hill-climbing, always pick best immediate improvement
 - Random: Random sampling of configurations
-- Beam: Maintain top-k candidates at each iteration
+- MOAR: Monte-Carlo Operator Action Rollouts
 """
 
 from agentic_planner.optimizer.search.base import (
@@ -17,14 +17,13 @@ from agentic_planner.optimizer.search.base import (
     SearchStrategy,
     SearchStrategyType,
 )
-from agentic_planner.optimizer.search.beam import (
-    BeamCandidate,
-    BeamSearchConfig,
-    BeamSearchStrategy,
-)
 from agentic_planner.optimizer.search.greedy import (
     GreedySearchConfig,
     GreedySearchStrategy,
+)
+from agentic_planner.optimizer.search.moar import (
+    MOARSearchConfig,
+    MOARSearchStrategy,
 )
 from agentic_planner.optimizer.search.random import (
     RandomSearchConfig,
@@ -46,10 +45,9 @@ __all__ = [
     # Random search
     "RandomSearchConfig",
     "RandomSearchStrategy",
-    # Beam search
-    "BeamCandidate",
-    "BeamSearchConfig",
-    "BeamSearchStrategy",
+    # MOAR search
+    "MOARSearchConfig",
+    "MOARSearchStrategy",
 ]
 
 
@@ -62,7 +60,7 @@ def create_search_strategy(
     Factory function to create search strategies.
 
     Args:
-        strategy_type: Type of search ("greedy", "random", "beam")
+        strategy_type: Type of search ("greedy", "random", "mcts", "moar")
         config: Configuration dict for the strategy
         evaluator: Evaluator for scoring configurations
 
@@ -79,9 +77,9 @@ def create_search_strategy(
             RandomSearchConfig.model_validate(config),
             evaluator,
         )
-    elif strategy_type == "beam":
-        return BeamSearchStrategy(
-            BeamSearchConfig.model_validate(config),
+    elif strategy_type in ("mcts", "moar"):
+        return MOARSearchStrategy(
+            MOARSearchConfig.model_validate(config),
             evaluator,
         )
     else:

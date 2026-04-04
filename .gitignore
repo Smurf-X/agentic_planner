@@ -25,6 +25,7 @@ ENV/
 
 # Data-Juicer work directories
 .dj_work/
+.agent_runtime/
 
 # IDE
 .vscode/
@@ -49,6 +50,7 @@ output/optimized*.jsonl
 
 # Sensitive files - contains real API keys
 examples/models_real.yaml
+models.yaml
 
 # Environment variables
 .env

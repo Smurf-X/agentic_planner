@@ -1,0 +1,5 @@
+{"ticket_id": "T001", "text": "After upgrading to v2.3, the export button crashes with a traceback every time I click CSV export.", "source": "email", "label_hint": "actionable"}
+{"ticket_id": "T002", "text": "!!! BEST DEAL !!! buy followers now $$$", "source": "web", "label_hint": "noise"}
+{"ticket_id": "T004", "text": "hi", "source": "chat", "label_hint": "noise"}
+{"ticket_id": "T008", "text": "The mobile app logs out users unexpectedly when switching from Wi-Fi to cellular.", "source": "chat", "label_hint": "actionable"}
+{"ticket_id": "T014", "text": "Webhook retries stop after the first timeout instead of exponential backoff.", "source": "in_app", "label_hint": "actionable"}
