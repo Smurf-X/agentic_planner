@@ -110,7 +110,7 @@ def _run_real_optimization(
                 "optimize_goal": objective,
             },
             evaluator=StubPipelineEvaluator(),
-            llm=llm_client,
+            llm_client=llm_client,
         )
         result = runner.run(cfg)
         best_config = result.best_config if result.best_config is not None else cfg
