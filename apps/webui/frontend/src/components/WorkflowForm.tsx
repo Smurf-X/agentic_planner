@@ -14,6 +14,8 @@ export function WorkflowForm({ onResult }: WorkflowFormProps) {
   const [objective, setObjective] = useState('quality');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [maxIterations, setMaxIterations] = useState(3);
 
   const handleGenerate = async () => {
     setLoading(true);
@@ -31,7 +33,9 @@ export function WorkflowForm({ onResult }: WorkflowFormProps) {
     setLoading(true);
     setError(null);
     try {
-      const result = await optimize(yamlText, objective, modelConfigPath);
+      const result = await optimize(yamlText, objective, modelConfigPath, {
+        max_iterations: maxIterations,
+      });
       onResult(result);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Optimize failed');
@@ -62,30 +66,39 @@ export function WorkflowForm({ onResult }: WorkflowFormProps) {
       </div>
 
       <div className="form-group">
-        <label className="form-label">Model Config Path</label>
+        <label className="form-label">
+          Model Config Path <span style={{ color: '#EF4444' }}>*</span>
+        </label>
         <input
           type="text"
           className="form-input"
           value={modelConfigPath}
           onChange={(e) => setModelConfigPath(e.target.value)}
-          placeholder="/path/to/models.yaml"
+          placeholder="/path/to/models.yaml (required for LLM calls)"
         />
+        <p style={{ fontSize: '12px', color: '#6B7280', marginTop: '4px' }}>
+          YAML file containing LLM model configurations (api_key, base_url, model name)
+        </p>
       </div>
 
       {mode === 'generate' ? (
         <>
           <div className="form-group">
-            <label className="form-label">Intent</label>
+            <label className="form-label">
+              Intent <span style={{ color: '#EF4444' }}>*</span>
+            </label>
             <textarea
               className="form-textarea"
               value={intent}
               onChange={(e) => setIntent(e.target.value)}
-              placeholder="Describe your data processing pipeline in natural language..."
+              placeholder="Describe your data processing pipeline in natural language, e.g., 'Clean text data and remove duplicates'"
               rows={4}
             />
           </div>
           <div className="form-group">
-            <label className="form-label">Dataset Path</label>
+            <label className="form-label">
+              Dataset Path <span style={{ color: '#EF4444' }}>*</span>
+            </label>
             <input
               type="text"
               className="form-input"
@@ -112,7 +125,9 @@ export function WorkflowForm({ onResult }: WorkflowFormProps) {
       ) : (
         <>
           <div className="form-group">
-            <label className="form-label">YAML Configuration</label>
+            <label className="form-label">
+              YAML Configuration <span style={{ color: '#EF4444' }}>*</span>
+            </label>
             <textarea
               className="form-textarea"
               value={yamlText}
@@ -133,6 +148,34 @@ export function WorkflowForm({ onResult }: WorkflowFormProps) {
               <option value="balanced">Balanced - Trade-off optimization</option>
             </select>
           </div>
+
+          <div className="form-group">
+            <button 
+              className="btn btn-secondary"
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              style={{ width: '100%', marginBottom: showAdvanced ? '12px' : '0' }}
+            >
+              {showAdvanced ? '▼ Hide Advanced' : '▶ Show Advanced'}
+            </button>
+          </div>
+
+          {showAdvanced && (
+            <div className="form-group">
+              <label className="form-label">Max Iterations</label>
+              <input
+                type="number"
+                className="form-input"
+                value={maxIterations}
+                onChange={(e) => setMaxIterations(parseInt(e.target.value) || 3)}
+                min={1}
+                max={20}
+              />
+              <p style={{ fontSize: '12px', color: '#6B7280', marginTop: '4px' }}>
+                Number of MCTS search iterations (higher = more thorough but slower)
+              </p>
+            </div>
+          )}
+
           <button 
             className="btn btn-primary submit-btn"
             onClick={handleOptimize} 
