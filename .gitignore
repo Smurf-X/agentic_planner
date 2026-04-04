@@ -64,3 +64,6 @@ test_dj2.yaml
 
 # Local git worktrees
 .worktrees/
+
+# Private local design notes
+docs/private/
