@@ -10,6 +10,7 @@ from apps.webui.backend.schemas import (
     ExplainRequest,
     GenerateRequest,
     OptimizeRequest,
+    TestLLMRequest,
     ToolResponseModel,
     ValidateRequest,
 )
@@ -25,6 +26,17 @@ def dispatch(req: DispatchRequest) -> ToolResponseModel:
     return ToolResponseModel(**resp.__dict__)
 
 
+@router.post("/test_llm", response_model=ToolResponseModel)
+def test_llm(req: TestLLMRequest) -> ToolResponseModel:
+    """Test LLM connection with provided credentials."""
+    resp = bridge.test_llm(
+        base_url=req.base_url,
+        api_key=req.api_key,
+        model=req.model,
+    )
+    return ToolResponseModel(**resp.__dict__)
+
+
 @router.post("/generate", response_model=ToolResponseModel)
 def generate(req: GenerateRequest) -> ToolResponseModel:
     payload = {
@@ -33,6 +45,8 @@ def generate(req: GenerateRequest) -> ToolResponseModel:
         "model_config_path": req.model_config_path,
         "options": req.options,
     }
+    if req.llm_config:
+        payload["llm_config"] = req.llm_config.model_dump()
     resp = bridge.dispatch("generate", payload)
     return ToolResponseModel(**resp.__dict__)
 
@@ -45,6 +59,8 @@ def optimize(req: OptimizeRequest) -> ToolResponseModel:
         "model_config_path": req.model_config_path,
         "options": req.options,
     }
+    if req.llm_config:
+        payload["llm_config"] = req.llm_config.model_dump()
     resp = bridge.dispatch("optimize", payload)
     return ToolResponseModel(**resp.__dict__)
 

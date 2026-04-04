@@ -27,7 +27,7 @@ export function ResultPanel({ result }: ResultPanelProps) {
     );
   }
 
-  const yamlContent = typedResult.data?.yaml || typedResult.data?.optimized_yaml || '';
+  const yamlContent = typedResult.data?.yaml_text || typedResult.data?.yaml || typedResult.data?.optimized_yaml || '';
   const timing = typedResult.timing_ms || 0;
 
   return (

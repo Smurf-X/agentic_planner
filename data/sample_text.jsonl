@@ -1,0 +1,15 @@
+{"id": 1, "text": "这是一个测试文本，包含一些需要清洗的内容。", "source": "web"}
+{"id": 2, "text": "Hello World! This is a test document with HTML tags <div>content</div>.", "source": "web"}
+{"id": 3, "text": "   多余的空格   和\n\n换行符   需要被清理。   ", "source": "api"}
+{"id": 4, "text": "这是一个测试文本，包含一些需要清洗的内容。", "source": "web"}
+{"id": 5, "text": "Contact us at test@example.com or visit https://example.com for more info.", "source": "email"}
+{"id": 6, "text": "重复的文本内容，重复的文本内容，重复的文本内容，重复的文本内容。", "source": "web"}
+{"id": 7, "text": "特殊字符！@#￥%……&*（）需要被处理。", "source": "user"}
+{"id": 8, "text": "Hello World! This is a test document with HTML tags <div>content</div>.", "source": "web"}
+{"id": 9, "text": "正常的中英文混合文本，This is normal text with 中文内容。", "source": "api"}
+{"id": 10, "text": "URL链接测试：https://github.com/example/repo 和 http://test.com/path?query=1", "source": "web"}
+{"id": 11, "text": "数字测试：12345，67890，浮点数 3.14159", "source": "api"}
+{"id": 12, "text": "表情符号测试 😀 🎉 ✨ 和特殊标点……", "source": "social"}
+{"id": 13, "text": "这是一个测试文本，包含一些需要清洗的内容。", "source": "web"}
+{"id": 14, "text": "Mixed content: <p>HTML</p> tags, https://links.com, and emails@test.org", "source": "web"}
+{"id": 15, "text": "过长的重复单词测试测试测试测试测试测试测试测试测试测试", "source": "user"}
